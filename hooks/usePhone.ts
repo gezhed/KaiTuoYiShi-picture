@@ -128,6 +128,17 @@ export function usePhone(props: PhoneModalProps) {
   );
 
   const unreadTotal = 计算手机未读(phone);
+  /**
+   * 旅人手机头像。
+   *
+   * 挂载进槽位的头像是 `asset:<id>` 引用，必须过一层解析才能渲染——
+   * 否则 `<img src="asset:...">` 什么也显示不出来。手机头像优先，
+   * 没设时回落到档案头像。
+   */
+  const travelerAvatar = useMemo(
+    () => 解析相册资源引用(album, traveler.图像档案?.手机头像 || traveler.头像 || undefined),
+    [album, traveler.图像档案?.手机头像, traveler.头像],
+  );
   const homeWallpaper = 解析相册资源引用(album, phone.wallpapers?.home) || DEFAULT_PHONE_HOME_WALLPAPER;
   const chatWallpaperSetting = 解析相册资源引用(album, phone.wallpapers?.chat) || DEFAULT_PHONE_CHAT_WALLPAPER;
   const chatWallpaper =
@@ -136,7 +147,7 @@ export function usePhone(props: PhoneModalProps) {
   const groupMembers =
     activeChat?.type === 'group'
       ? activeChat.participantIds
-          .map((id) => resolveContactByParticipantId(contacts, normalizedNpcRecords, id))
+          .map((id) => resolveContactByParticipantId(contacts, normalizedNpcRecords, id, album))
           .filter((item): item is 手机联系人 => Boolean(item))
       : [];
   const groupAddCandidates =
@@ -365,7 +376,7 @@ export function usePhone(props: PhoneModalProps) {
       senderId: 'player',
       senderName: traveler.姓名 || '我',
       role: 'player',
-      avatar: traveler.图像档案?.手机头像 || traveler.头像 || undefined,
+      avatar: travelerAvatar || undefined,
       content: text,
       turn: turnCount,
     });
@@ -437,7 +448,7 @@ export function usePhone(props: PhoneModalProps) {
     setPhoneError('');
     setGeneratingSeedId(seed.id);
 
-    const contact = resolveSeedContact(contacts, normalizedNpcRecords, seed);
+    const contact = resolveSeedContact(contacts, normalizedNpcRecords, seed, album);
     if (seed.targetType === 'private' && !contact.available) {
       setPhoneError('该对象尚未作为联系人解锁。');
       setGeneratingSeedId('');
@@ -614,6 +625,8 @@ export function usePhone(props: PhoneModalProps) {
     homeWallpaper,
     chatWallpaper,
     chatWallpaperSetting,
+    /** 已解析的旅人手机头像；`asset:` 引用不能直接当 src 用。 */
+    travelerAvatar,
     isSeedCoolingDown: isSeedCoolingDownFor,
   };
 

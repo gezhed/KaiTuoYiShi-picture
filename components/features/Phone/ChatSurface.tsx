@@ -7,6 +7,7 @@ import { cardClip, smallClip } from './phoneStyles';
 export function ChatSurface({
   chat,
   traveler,
+  travelerAvatar,
   contact,
   groupMembers,
   groupAddCandidates,
@@ -21,6 +22,8 @@ export function ChatSurface({
 }: {
   chat: 手机会话;
   traveler: 角色数据结构;
+  /** 已解析的旅人手机头像；缺省时回落到角色档案里的字段。 */
+  travelerAvatar?: string;
   contact?: 手机联系人;
   groupMembers?: 手机联系人[];
   groupAddCandidates?: 手机联系人[];
@@ -336,7 +339,7 @@ export function ChatSurface({
                       {msg.content}
                     </div>
                     {msg.role === 'player' && (
-                      <Avatar name={traveler.姓名 || '我'} src={traveler.图像档案?.手机头像 || traveler.头像 || undefined} />
+                      <Avatar name={traveler.姓名 || '我'} src={travelerAvatar || traveler.图像档案?.手机头像 || traveler.头像 || undefined} />
                     )}
                   </div>
                 </Fragment>

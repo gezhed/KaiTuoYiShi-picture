@@ -1,31 +1,60 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { 相册系统 } from '@/models/imageGeneration';
+import type { 角色数据结构 } from '@/models/character';
+import type { NPC记录 } from '@/models/npc';
 import type { 游戏设置 } from '@/models/settings';
+import type { UseGameStateReturn } from '@/hooks/useGameState';
 import { 创建相册图片条目, 添加图片到相册, 解析相册资源引用, 创建相册资源引用 } from '@/utils/albumActions';
+import { 卸载槽位图片, 槽位键转目标, 旅人槽位选项, 绑定NPC槽位选项, type 头像槽位选项 } from '@/utils/avatarActions';
 import { 统计图片缓存, 清空图片缓存, 清理过期缓存 } from '@/services/imageCache';
 import { 生成单张插图, 重写提示词标记 } from '@/services/ai/imageGen/generateIllustration';
 import type { 角色匹配上下文 } from '@/services/ai/imageGen/characterPrompt';
 import { 主按钮, 面板, 提示条, 次级按钮, 页签条, 设置字段 as 字段 } from '@/components/features/Settings/settingsPrimitives';
 import { ImageLightbox, type 查看图片项 } from './ImageLightbox';
+import { AvatarEditorDialog } from './AvatarWorkbench';
+import { SlotApplyDialog } from './SlotApplyDialog';
+import { GalleryWorkspace, type 图库条目选中 } from '@/components/features/GameSystems/album/GalleryWorkspace';
+import { buildAssetMap, buildCharacterLibraryRecords } from '@/components/features/GameSystems/album/galleryWorkspaceLogic';
 import { cardClip } from '@/components/ui/clipPaths';
 
-export type 工作台页签 = 'gallery' | 'manual' | 'cache';
+export type 工作台页签 = 'gallery' | 'manual' | 'avatars' | 'cache';
 
 interface Props {
   album: 相册系统;
   onAlbumChange: (next: 相册系统) => void;
+  traveler: 角色数据结构;
+  npcs: NPC记录[];
+  /** 图库/头像编辑器需要直接改旅人与 NPC，并用活跃叶子落盘。 */
+  state: UseGameStateReturn;
   gameSettings: 游戏设置;
   /** 打开「设置 → 文生图」。文生图设置在子系统分组里，需要直达入口。 */
   onOpenImageGenSettings: () => void;
+  onExportAlbum: () => void;
+  onImportAlbum: (file: File | null, mode: 'merge' | 'replace') => void;
+  albumOperationLabel?: string;
+  albumOperationBusy?: boolean;
 }
 
 const 页签: Array<{ id: 工作台页签; label: string; desc: string }> = [
-  { id: 'gallery', label: '成品图库', desc: '已归档的图片' },
+  { id: 'gallery', label: '图库', desc: '按角色浏览、预览与设到槽位' },
   { id: 'manual', label: '手动出图', desc: '写提示词直接生成' },
+  { id: 'avatars', label: '头像与立绘', desc: '出图并挂到角色槽位' },
   { id: 'cache', label: '图片缓存', desc: '按提示词归档的图廊' },
 ];
 
-export function ImageWorkbenchPanel({ album, onAlbumChange, gameSettings, onOpenImageGenSettings }: Props) {
+export function ImageWorkbenchPanel({
+  album,
+  onAlbumChange,
+  traveler,
+  npcs,
+  state,
+  gameSettings,
+  onOpenImageGenSettings,
+  onExportAlbum,
+  onImportAlbum,
+  albumOperationLabel = '',
+  albumOperationBusy = false,
+}: Props) {
   const [当前页, set当前页] = useState<工作台页签>('gallery');
   const [提示, set提示] = useState<{ kind: 'info' | 'ok' | 'error'; text: string } | null>(null);
   const [提示词, set提示词] = useState('');
@@ -35,6 +64,10 @@ export function ImageWorkbenchPanel({ album, onAlbumChange, gameSettings, onOpen
   const [查看下标, set查看下标] = useState<number | null>(null);
   const [缓存统计, set缓存统计] = useState<{ 条目数: number; 图片数: number; 总字节: number } | null>(null);
   const [缓存预览, set缓存预览] = useState<Array<{ id: string; url: string; prompt: string }>>([]);
+  /** 图库里点「设置到槽位」时选中的那张图。 */
+  const [待应用, set待应用] = useState<图库条目选中 | null>(null);
+  /** 头像编辑器打开时对应的角色槽位选项。 */
+  const [编辑器, set编辑器] = useState<{ 标题: string; 槽位: 头像槽位选项[] } | null>(null);
 
   const 系统 = gameSettings.文生图系统;
 
@@ -70,6 +103,15 @@ export function ImageWorkbenchPanel({ album, onAlbumChange, gameSettings, onOpen
     启用列表: 系统.角色启用列表,
     全部角色: 系统.角色卡,
   }), [系统.角色启用列表, 系统.角色卡]);
+
+  /** 「头像与立绘」页的角色清单：旅人 + 全部 NPC。 */
+  const 角色清单 = useMemo(() => {
+    const 全部 = buildCharacterLibraryRecords(traveler, npcs, album, buildAssetMap(album), true);
+    return 全部.map((记录) => ({
+      记录,
+      头像: 记录.avatar,
+    }));
+  }, [traveler, npcs, album]);
 
   const 处理出图 = async () => {
     if (!提示词.trim()) {
@@ -126,6 +168,22 @@ export function ImageWorkbenchPanel({ album, onAlbumChange, gameSettings, onOpen
     set提示({ kind: 'ok', text: '图片缓存已清空。' });
   };
 
+  /** 打开某个角色的头像编辑器：旅人与伙伴各一套槽位。 */
+  const 打开编辑器 = (record: import('@/components/features/GameSystems/album/galleryWorkspaceLogic').CharacterLibraryRecord) => {
+    set编辑器({
+      标题: record.kind === 'traveler' ? `${record.name} · 生成 / 更换头像` : `${record.name} · 生成 / 更换头像`,
+      槽位: record.kind === 'traveler' ? 旅人槽位选项 : 绑定NPC槽位选项(record.id),
+    });
+  };
+
+  const 清空槽位 = async (参数: {
+    record: import('@/components/features/GameSystems/album/galleryWorkspaceLogic').CharacterLibraryRecord;
+    slotKey: string;
+  }) => {
+    const 结果 = await 卸载槽位图片(state, 槽位键转目标(参数.record.id, 参数.slotKey));
+    set提示({ kind: 结果.成功 ? 'ok' : 'error', text: 结果.消息 });
+  };
+
   return (
     <div className="space-y-4">
       <div className="px-4 py-3" style={{ border: '1px solid rgba(var(--tj-accent-primary), var(--tj-edge-tint))', clipPath: cardClip }}>
@@ -133,7 +191,7 @@ export function ImageWorkbenchPanel({ album, onAlbumChange, gameSettings, onOpen
           视觉资产
         </div>
         <div className="mt-1 text-xs leading-relaxed" style={{ color: 'rgba(var(--tj-ui-body), 0.78)' }}>
-          生图设置已移到「设置 → 文生图」。这里看图、手动出图与管理缓存。
+          生图设置已移到「设置 → 文生图」。这里浏览图库、按角色更换头像、手动出图与管理缓存。
         </div>
         {/* 文生图设置在「子系统」分组里，只写一句「去设置里开」用户找不到，所以给直达按钮。 */}
         <div className="mt-2 flex flex-wrap items-center gap-2">
@@ -149,33 +207,22 @@ export function ImageWorkbenchPanel({ album, onAlbumChange, gameSettings, onOpen
       <页签条 页签={页签} 当前={当前页} onSelect={set当前页} />
 
       {当前页 === 'gallery' && (
-        <面板 title="成品图库" desc={`共 ${归档图.length} 张。点任意一张看完整大图与生成参数。`}>
-          {归档图.length === 0 ? (
-            <提示条 kind="info" text="还没有图片。去「手动出图」生成第一张。" />
-          ) : (
-            <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4">
-              {归档图.map((项, 下标) => (
-                <figure
-                  key={项.条目.id}
-                  style={{ border: '1px solid rgba(var(--tj-accent-primary), var(--tj-edge-tint-weak))' }}
-                >
-                  <button
-                    type="button"
-                    className="block w-full transition-all hover:opacity-90"
-                    onClick={() => set查看下标(下标)}
-                    title="点击查看完整大图"
-                  >
-                    {/* 缩略图可以裁切；完整图在查看器里按原始比例显示。 */}
-                    <img src={项.地址} alt={项.条目.title} className="h-32 w-full object-cover" loading="lazy" />
-                  </button>
-                  <figcaption className="px-2 py-1 text-[11px] leading-tight" style={{ color: 'rgba(var(--tj-text-secondary), 0.8)' }}>
-                    {项.条目.title}
-                  </figcaption>
-                </figure>
-              ))}
-            </div>
-          )}
-        </面板>
+        // min-w-0：图库是三列网格，缺了它父级 flex/grid 会按内容撑宽而顶出容器。
+        <div className="min-w-0">
+          <GalleryWorkspace
+            album={album}
+            traveler={traveler}
+            npcs={npcs}
+            onRequestApply={set待应用}
+            onClearSlot={(参数) => void 清空槽位(参数)}
+            onAlbumChange={onAlbumChange}
+            onExport={onExportAlbum}
+            onImport={onImportAlbum}
+            operationLabel={albumOperationLabel}
+            operationBusy={albumOperationBusy}
+            onOpenAvatarEditor={打开编辑器}
+          />
+        </div>
       )}
 
       {当前页 === 'manual' && (
@@ -199,6 +246,42 @@ export function ImageWorkbenchPanel({ album, onAlbumChange, gameSettings, onOpen
           <主按钮 onClick={() => void 处理出图()} disabled={生成中}>
             {生成中 ? '生成中…' : '生成图片'}
           </主按钮>
+        </面板>
+      )}
+
+      {当前页 === 'avatars' && (
+        <面板 title="头像与立绘" desc="选一个角色，出图或复用它已有的图片，直接挂到档案/正文/手机头像或立绘槽位。">
+          {角色清单.length === 0 ? (
+            <提示条 kind="info" text="还没有可编辑的角色。先开局或让剧情写入伙伴档案。" />
+          ) : (
+            <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+              {角色清单.map(({ 记录, 头像 }) => (
+                <button
+                  key={记录.id}
+                  type="button"
+                  onClick={() => 打开编辑器(记录)}
+                  className="flex items-center gap-3 px-3 py-2.5 text-left transition-all hover:opacity-90"
+                  style={{
+                    background: 'rgba(var(--tj-ui-panel-strong),0.42)',
+                    border: '1px solid rgba(var(--tj-accent-primary), var(--tj-edge-tint))',
+                    clipPath: cardClip,
+                  }}
+                >
+                  <span className="flex h-11 w-11 shrink-0 items-center justify-center overflow-hidden" style={{ border: '1px solid rgba(var(--tj-accent-primary), var(--tj-edge-tint-weak))', clipPath: cardClip }}>
+                    {头像
+                      ? <img src={头像} alt={记录.name} className="h-full w-full object-cover" />
+                      : <span className="text-[10px]" style={{ color: 'rgba(var(--tj-text-secondary), 0.7)' }}>空</span>}
+                  </span>
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate font-serif text-sm font-bold tracking-[0.12em]" style={{ color: 'rgb(var(--tj-ui-title))' }}>{记录.name}</span>
+                    <span className="mt-0.5 block text-[11px]" style={{ color: 'rgba(var(--tj-text-secondary), 0.78)' }}>
+                      {记录.kind === 'traveler' ? '旅人' : '伙伴'} · 档案/正文/手机头像与立绘 · 已设 {记录.mountedCount}/4
+                    </span>
+                  </span>
+                </button>
+              ))}
+            </div>
+          )}
         </面板>
       )}
 
@@ -233,6 +316,27 @@ export function ImageWorkbenchPanel({ album, onAlbumChange, gameSettings, onOpen
 
       {提示 ? <提示条 kind={提示.kind} text={提示.text} /> : null}
 
+      {待应用 ? (
+        <SlotApplyDialog
+          state={state}
+          引用={创建相册资源引用(待应用.entry.assetId)}
+          预览地址={待应用.src}
+          title={待应用.entry.title}
+          onClose={() => set待应用(null)}
+        />
+      ) : null}
+
+      {编辑器 ? (
+        <AvatarEditorDialog
+          state={state}
+          标题={编辑器.标题}
+          槽位选项={编辑器.槽位}
+          编辑器键={`${编辑器.标题}:${编辑器.槽位[0]?.id ?? ''}`}
+          onClose={() => set编辑器(null)}
+          onOpenImageGenSettings={onOpenImageGenSettings}
+        />
+      ) : null}
+
       <ImageLightbox
         项={查看下标 === null ? null : (归档图[查看下标] ? 转查看项(归档图[查看下标]) : null)}
         onClose={() => set查看下标(null)}
@@ -256,7 +360,7 @@ function 转查看项(项: {
     prompt: 项.资源?.finalPrompt || 项.资源?.prompt,
     negativePrompt: 项.资源?.finalNegativePrompt || 项.资源?.negativePrompt,
     dimensions: 项.资源?.dimensions
-      ?? (项.资源?.width && 项.资源?.height ? `${项.资源.width}x${项.资源.height}` : undefined),
+      ?? (项.资源?.width && 项.资源.height ? `${项.资源.width}x${项.资源.height}` : undefined),
     model: 项.资源?.model,
     note: 项.条目.note,
     createdAt: 项.条目.createdAt,

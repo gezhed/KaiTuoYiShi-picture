@@ -236,6 +236,7 @@ export function MessagesApp({
           <ChatSurface
             chat={activeChat}
             traveler={traveler}
+            travelerAvatar={state.travelerAvatar}
             contact={contact}
             groupMembers={state.groupMembers}
             groupAddCandidates={state.groupAddCandidates}

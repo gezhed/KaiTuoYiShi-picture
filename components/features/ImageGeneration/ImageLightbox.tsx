@@ -28,12 +28,15 @@ export function ImageLightbox({
   onClose,
   onPrev,
   onNext,
+  onSetSlot,
 }: {
   项: 查看图片项 | null;
   onClose: () => void;
   /** 图库有多张时提供；为 null 表示没有上一张。 */
   onPrev?: (() => void) | null;
   onNext?: (() => void) | null;
+  /** 提供时显示「设置到槽位」；用于把这头像挂到角色头像位。 */
+  onSetSlot?: (() => void) | null;
 }) {
   useEffect(() => {
     if (!项) return undefined;
@@ -124,6 +127,23 @@ export function ImageLightbox({
               }}
             >
               下一张
+            </button>
+          ) : null}
+          {onSetSlot ? (
+            <button
+              type="button"
+              onClick={(事件) => {
+                事件.stopPropagation();
+                onSetSlot();
+              }}
+              className="px-2 py-1 text-[11px] transition-all hover:opacity-85"
+              style={{
+                color: 'rgb(var(--tj-on-accent))',
+                background: 'rgba(var(--tj-accent-primary), 0.92)',
+                border: '1px solid rgba(var(--tj-accent-primary), 1)',
+              }}
+            >
+              设置到槽位
             </button>
           ) : null}
           <a

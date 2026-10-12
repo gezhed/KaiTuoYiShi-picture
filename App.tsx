@@ -3,6 +3,14 @@ import { useGame } from '@/hooks/useGame';
 import { useDeviceSettings } from '@/hooks/useDeviceSettings';
 import { useAiTools, type AiToolsActions } from '@/hooks/useAiTools';
 import { useHomePage } from '@/hooks/useHomePage';
+import {
+  exportAlbumInWorker,
+  importAlbumInWorker,
+  albumOperationStageLabel,
+} from '@/components/features/GameSystems/album/albumArchiveWorkerClient';
+import type { AlbumImportMode } from '@/components/features/GameSystems/album/albumArchive';
+import { 写入相册设定 } from '@/utils/avatarActions';
+import { devLog, devLogError } from '@/utils/devLog';
 import { LandingPage } from '@/components/features/Home/LandingPage';
 import { HomeTransitionOverlay, MysteryChatModal } from '@/components/features/Home/HomeOverlays';
 import { GameView } from '@/components/layout/GameView';
@@ -123,6 +131,56 @@ export function App() {
     setShowSettings(true);
   }, []);
   const handleCloseSystemDrawer = useCallback(() => setActiveSystem(null), []);
+
+  /*
+   * 相册备份的导入导出。
+   *
+   * 旧分支这两件事在相册面板里，新版工作台把面板换掉后没有接上，
+   * 于是图库既导不出去也导不回来。这里复用归档 worker，
+   * 导出只是下载文件，导入则替换/合并当前相册并立刻写进活跃叶子。
+   */
+  const [albumOperationLabel, setAlbumOperationLabel] = useState('');
+
+  const handleExportAlbum = useCallback(() => {
+    setAlbumOperationLabel('正在导出相册…');
+    void (async () => {
+      try {
+        const 结果 = await exportAlbumInWorker(state.相册, (进度) => {
+          const 后缀 = 进度.total && 进度.total > 0
+            ? ` ${Math.min(进度.completed ?? 0, 进度.total)}/${进度.total}`
+            : '';
+          setAlbumOperationLabel(`${albumOperationStageLabel(进度)}${后缀}`);
+        });
+        devLog('save', 'album-export-done', { ...结果 });
+      } catch (错误) {
+        devLogError('save', 'album-export-failed', 错误);
+      } finally {
+        setAlbumOperationLabel('');
+      }
+    })();
+  }, [state.相册]);
+
+  const handleImportAlbum = useCallback((file: File | null, mode: AlbumImportMode) => {
+    if (!file) return;
+    setAlbumOperationLabel('正在导入相册…');
+    void (async () => {
+      try {
+        const 结果 = await importAlbumInWorker({
+          file,
+          currentAlbum: state.相册,
+          mode,
+          onProgress: (进度) => setAlbumOperationLabel(albumOperationStageLabel(进度)),
+        });
+        if (!结果) return;
+        const 落盘 = await 写入相册设定(state, 结果.album);
+        devLog('save', 'album-import-done', { ...结果.stats, 已落盘: 落盘.成功 });
+      } catch (错误) {
+        devLogError('save', 'album-import-failed', 错误);
+      } finally {
+        setAlbumOperationLabel('');
+      }
+    })();
+  }, [state]);
   const closeTransientUi = useCallback(() => {
     setActiveSystem(null);
     setShowCharacter(false);
@@ -450,6 +508,11 @@ export function App() {
             onNpcRecordsChange: state.setNPC,
             album: state.相册,
             onAlbumChange: state.set相册,
+            state,
+            onExportAlbum: handleExportAlbum,
+            onImportAlbum: handleImportAlbum,
+            albumOperationLabel,
+            albumOperationBusy: Boolean(albumOperationLabel),
             phone: state.手机,
             onPhoneChange: state.set手机,
             memorySystem: state.记忆,
@@ -874,6 +937,12 @@ function renderSystemPanel(
     onNpcRecordsChange: React.Dispatch<React.SetStateAction<NPC记录[]>>;
     album: 相册系统;
     onAlbumChange: React.Dispatch<React.SetStateAction<相册系统>>;
+    /** 视觉资产页需要整套状态：头像挂载要写活跃叶子。 */
+    state: ReturnType<typeof useGame>['state'];
+    onExportAlbum: () => void;
+    onImportAlbum: (file: File | null, mode: AlbumImportMode) => void;
+    albumOperationLabel: string;
+    albumOperationBusy: boolean;
     phone: import('@/models/phone').手机系统;
     onPhoneChange: React.Dispatch<React.SetStateAction<import('@/models/phone').手机系统>>;
     memorySystem: 记忆系统;
@@ -936,6 +1005,8 @@ function renderSystemPanel(
           maleNsfwArchiveEnabled={ctx.gameSettings.enableMaleNsfwArchive}
           zhikuSystem={ctx.zhikuSystem}
           devMode={ctx.gameSettings.devMode}
+          state={ctx.state}
+          onOpenImageGenSettings={() => ctx.onOpenSettingsAt('imageGen')}
         />
       );
     case 'album':
@@ -943,8 +1014,15 @@ function renderSystemPanel(
         <ImageWorkbenchPanel
           album={ctx.album}
           onAlbumChange={ctx.onAlbumChange}
+          traveler={ctx.traveler}
+          npcs={ctx.npcRecords}
+          state={ctx.state}
           gameSettings={ctx.gameSettings}
           onOpenImageGenSettings={() => ctx.onOpenSettingsAt('imageGen')}
+          onExportAlbum={ctx.onExportAlbum}
+          onImportAlbum={ctx.onImportAlbum}
+          albumOperationLabel={ctx.albumOperationLabel}
+          albumOperationBusy={ctx.albumOperationBusy}
         />
       );
     case 'news':

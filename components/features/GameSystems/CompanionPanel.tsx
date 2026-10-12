@@ -1,10 +1,13 @@
-﻿import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import type { NPC记录, NPC阶位 } from '@/models/npc';
 import { 归一化NPC记录列表 } from '@/models/npc';
 import type { 相册系统 } from '@/models/imageGeneration';
 import type { 智库系统 } from '@/models/zhiku';
+import type { UseGameStateReturn } from '@/hooks/useGameState';
 import { buildNpcRelationshipPlanning } from '@/services/npcRelationshipPlanning';
 import { enrichNpcArchives } from '@/utils/npcArchiveEnrichment';
+import { 绑定NPC槽位选项 } from '@/utils/avatarActions';
+import { AvatarEditorDialog } from '@/components/features/ImageGeneration/AvatarWorkbench';
 import { NpcDetail } from './companion/npcDetail';
 import { EmptyRoster, NoSelection, NpcListItem } from './companion/roster';
 import { TabButton } from './companion/primitives';
@@ -20,11 +23,37 @@ interface CompanionPanelProps {
   maleNsfwArchiveEnabled?: boolean;
   zhikuSystem?: 智库系统;
   devMode?: boolean;
+  /** 头像/立绘编辑需要整套状态：挂载要写活跃叶子。缺省时视觉档案只读。 */
+  state?: UseGameStateReturn;
+  /** 直达「设置 → 文生图」。 */
+  onOpenImageGenSettings?: () => void;
 }
 
-export function CompanionPanel({ npcRecords, onNpcRecordsChange, album, nsfwEnabled, maleNsfwArchiveEnabled = false, zhikuSystem, devMode = false }: CompanionPanelProps) {
+/** 伙伴详情页的视觉档案槽位。 */
+type 伙伴头像槽位 = '档案' | '正文' | '手机' | '立绘';
+
+/** 槽位名 → 编辑器里的选项 id（见 `utils/avatarActions` 的 NPC 槽位表）。 */
+function 槽位选项ID(slot: 伙伴头像槽位): string {
+  if (slot === '正文') return 'npc_story';
+  if (slot === '手机') return 'npc_phone';
+  if (slot === '立绘') return 'npc_portrait';
+  return 'npc_profile';
+}
+
+export function CompanionPanel({
+  npcRecords,
+  onNpcRecordsChange,
+  album,
+  nsfwEnabled,
+  maleNsfwArchiveEnabled = false,
+  zhikuSystem,
+  devMode = false,
+  state,
+  onOpenImageGenSettings,
+}: CompanionPanelProps) {
   const [tab, setTab] = useState<NPC阶位>('companion');
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [头像编辑, set头像编辑] = useState<{ npcId: string; 名称: string; 默认槽位?: string } | null>(null);
   const normalizedRecords = useMemo(() => {
     const normalized = 归一化NPC记录列表(npcRecords);
     return enrichNpcArchives(normalized, {
@@ -74,6 +103,17 @@ export function CompanionPanel({ npcRecords, onNpcRecordsChange, album, nsfwEnab
   const demoteToExtra = (id: string) => updateRecord(id, { 阶位: 'extra', 同行: false });
   return (
     <div className="flex h-full min-h-0 min-w-0 flex-col gap-3 overflow-y-auto overflow-x-hidden md:flex-row md:gap-4 md:overflow-hidden">
+      {头像编辑 && state ? (
+        <AvatarEditorDialog
+          state={state}
+          标题={`${头像编辑.名称} · 生成 / 更换头像`}
+          槽位选项={绑定NPC槽位选项(头像编辑.npcId)}
+          默认槽位={头像编辑.默认槽位}
+          onClose={() => set头像编辑(null)}
+          onOpenImageGenSettings={onOpenImageGenSettings}
+          编辑器键={`${头像编辑.npcId}:${头像编辑.默认槽位 ?? ''}`}
+        />
+      ) : null}
       <aside className="flex min-w-0 shrink-0 flex-col gap-3 md:min-h-0 md:w-[260px]">
         <div className="hidden px-3 py-3 md:block" style={panelStyle}>
           <div>
@@ -136,6 +176,11 @@ export function CompanionPanel({ npcRecords, onNpcRecordsChange, album, nsfwEnab
             onToggleTraveling={() => updateRecord(selected.id, { 同行: !selected.同行 })}
             planning={selectedPlanning}
             devMode={devMode}
+            onEditAvatar={state ? (slot) => set头像编辑({
+              npcId: selected.id,
+              名称: selected.姓名,
+              默认槽位: 槽位选项ID(slot),
+            }) : undefined}
           />
         ) : (
           <NoSelection tab={tab} />

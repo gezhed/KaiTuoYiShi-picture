@@ -22,6 +22,7 @@ export function NpcDetail({
   nsfwEnabled,
   planning,
   devMode,
+  onEditAvatar,
 }: {
   npc: NPC记录;
   album?: 相册系统;
@@ -31,6 +32,8 @@ export function NpcDetail({
   nsfwEnabled: boolean;
   planning?: NPC关系规划条目;
   devMode: boolean;
+  /** 点视觉档案里的槽位卡片时打开头像编辑器。 */
+  onEditAvatar?: (slot: '档案' | '正文' | '手机' | '立绘') => void;
 }) {
   const isCompanion = npc.阶位 === 'companion';
   const [detailTab, setDetailTab] = useState<DetailTab>('archive');
@@ -190,7 +193,7 @@ export function NpcDetail({
             <DetailBlock title="装备面板">
               <Paragraph text={npc.装备摘要} placeholder="尚未记录其装备与随身物" italic />
             </DetailBlock>
-            <VisualArchivePanel npc={npc} album={album} />
+            <VisualArchivePanel npc={npc} album={album} onEditAvatar={onEditAvatar} />
           </section>
         </>
       )}
@@ -202,14 +205,27 @@ export function NpcDetail({
   );
 }
 
-function VisualArchivePanel({ npc, album }: { npc: NPC记录; album?: 相册系统 }) {
+function VisualArchivePanel({
+  npc,
+  album,
+  onEditAvatar,
+}: {
+  npc: NPC记录;
+  album?: 相册系统;
+  onEditAvatar?: (slot: '档案' | '正文' | '手机' | '立绘') => void;
+}) {
   return (
-    <DetailBlock title="视觉档案预留">
+    <DetailBlock title="视觉档案">
       <div className="grid gap-3 sm:grid-cols-3">
-        <AvatarSlotCard npc={npc} album={album} slot="档案" label="档案头像" description="伙伴面板" />
-        <AvatarSlotCard npc={npc} album={album} slot="正文" label="正文头像" description="剧情气泡" />
-        <AvatarSlotCard npc={npc} album={album} slot="手机" label="小手机头像" description="短讯名片" />
+        <AvatarSlotCard npc={npc} album={album} slot="档案" label="档案头像" description="伙伴面板" onEdit={onEditAvatar} />
+        <AvatarSlotCard npc={npc} album={album} slot="正文" label="正文头像" description="剧情气泡" onEdit={onEditAvatar} />
+        <AvatarSlotCard npc={npc} album={album} slot="手机" label="小手机头像" description="短讯名片" onEdit={onEditAvatar} />
       </div>
+      {onEditAvatar && (
+        <div className="mt-2 text-[11px] leading-relaxed" style={{ color: 'rgba(var(--tj-text-secondary),0.72)' }}>
+          点卡片可以出图或从图库里挑一张换上；图库在「视觉资产 → 图库」。
+        </div>
+      )}
       <div className="mt-3 grid gap-2 lg:grid-cols-2">
         <InfoPill label="图像状态" value={npc.图像档案?.状态 ?? 'none'} />
         <InfoPill label="图像来源" value={npc.图像档案?.来源 ?? (读取NPC头像(npc) ? '手动 / 原著' : '未设定')} />
@@ -228,27 +244,20 @@ function AvatarSlotCard({
   slot,
   label,
   description,
+  onEdit,
 }: {
   npc: NPC记录;
   album?: 相册系统;
   slot: '档案' | '正文' | '手机';
   label: string;
   description: string;
+  onEdit?: (slot: '档案' | '正文' | '手机' | '立绘') => void;
 }) {
   const src = 解析相册资源引用(album, 读取NPC头像(npc, slot));
-  return (
-    <div
-      className="flex min-w-0 items-center gap-3 px-3 py-3"
-      style={{
-        background: src ? 'rgba(var(--tj-btn-primary-start), 0.075)' : quietSurface,
-        border: src
-          ? '1px solid rgba(var(--tj-btn-primary-start), var(--tj-edge-tint-strong))'
-          : '1px solid rgba(var(--tj-border), var(--tj-edge-weak))',
-        clipPath: smallClip,
-      }}
-    >
+  const 内容 = (
+    <>
       <Avatar npc={npc} album={album} size={42} slot={slot} selected={Boolean(src)} />
-      <div className="min-w-0">
+      <div className="min-w-0 text-left">
         <div className="truncate font-serif text-[12px] font-semibold tracking-[0.16em]" style={{ color: titleColor }}>
           {label}
         </div>
@@ -256,6 +265,28 @@ function AvatarSlotCard({
           {src ? description : `${description} · 待生成`}
         </div>
       </div>
+    </>
+  );
+  const 样式 = {
+    background: src ? 'rgba(var(--tj-btn-primary-start), 0.075)' : quietSurface,
+    border: src
+      ? '1px solid rgba(var(--tj-btn-primary-start), var(--tj-edge-tint-strong))'
+      : '1px solid rgba(var(--tj-border), var(--tj-edge-weak))',
+    clipPath: smallClip,
+  } as const;
+  return onEdit ? (
+    <button
+      type="button"
+      onClick={() => onEdit(slot)}
+      className="flex min-w-0 items-center gap-3 px-3 py-3 transition-all hover:opacity-90"
+      style={样式}
+      title="点击更换这个头像"
+    >
+      {内容}
+    </button>
+  ) : (
+    <div className="flex min-w-0 items-center gap-3 px-3 py-3" style={样式}>
+      {内容}
     </div>
   );
 }

@@ -166,6 +166,7 @@ export function resolveContactByParticipantId(
   contacts: 手机联系人[],
   normalizedNpcRecords: NPC记录[],
   participantId: string,
+  album?: 相册系统,
 ): 手机联系人 | undefined {
   const direct = contacts.find((contact) => contact.id === participantId || contact.npcId === participantId);
   if (direct) return direct;
@@ -175,7 +176,8 @@ export function resolveContactByParticipantId(
     id: canonicalContactId(npc.id),
     npcId: npc.id,
     name: npc.姓名,
-    avatar: 读取NPC头像(npc, '手机'),
+    // 手机头像是 `asset:` 引用，必须解析后才能当 src 用。
+    avatar: 解析相册资源引用(album, 读取NPC头像(npc, '手机')),
     organization: undefined,
     relationLabel: 格式化NPC关系(npc.好感度, Boolean(npc.亲密关系)),
     available: true,
@@ -187,6 +189,7 @@ export function resolveSeedContact(
   contacts: 手机联系人[],
   normalizedNpcRecords: NPC记录[],
   seed: 主动来信种子,
+  album?: 相册系统,
 ): 手机联系人 {
   const ids = [seed.targetId, ...seed.relatedNpcIds].filter(Boolean);
   const existing = contacts.find(
@@ -200,7 +203,7 @@ export function resolveSeedContact(
       id: canonicalContactId(npc.id),
       npcId: npc.id,
       name: npc.姓名,
-      avatar: 读取NPC头像(npc, '手机'),
+      avatar: 解析相册资源引用(album, 读取NPC头像(npc, '手机')),
       organization: undefined,
       relationLabel: 格式化NPC关系(npc.好感度, Boolean(npc.亲密关系)),
       available: !hiddenEnemy,
