@@ -1,0 +1,175 @@
+﻿import { useState } from 'react';
+import type { 游戏设置 } from '@/models/settings';
+import type { 提示词模块 } from '@/models/prompts';
+import { badgeClip, mediumClip, smallClip, tinyClip } from '@/components/ui/clipPaths';
+
+interface Props {
+  settings: 游戏设置;
+  onChange: (s: 游戏设置) => void;
+  onPersistSettings: (s: 游戏设置) => Promise<void>;
+}
+
+
+function setModuleEnabled(modules: 提示词模块[], id: string, v: boolean): 提示词模块[] {
+  return modules.map((m) => (m.id === id ? { ...m, enabled: v, updatedAt: Date.now() } : m));
+}
+
+export function NsfwSettingsTab({ settings, onChange, onPersistSettings }: Props) {
+  const [saveMessage, setSaveMessage] = useState('');
+  const [savedFlash, setSavedFlash] = useState(false);
+
+  const handleSave = async () => {
+    try {
+      await onPersistSettings(settings);
+      setSaveMessage('NSFW 设置已保存。');
+      setSavedFlash(true);
+      window.setTimeout(() => setSavedFlash(false), 1600);
+    } catch (err) {
+      setSaveMessage(`保存失败：${err instanceof Error ? err.message : String(err)}`);
+    }
+  };
+
+  const updateNsfw = (enabled: boolean) => {
+    onChange({
+      ...settings,
+      enableNsfw: enabled,
+      enableMaleNsfwArchive: enabled ? settings.enableMaleNsfwArchive : false,
+      promptModules: setModuleEnabled(settings.promptModules, 'builtin_nsfw', enabled),
+    });
+  };
+
+  return (
+    <div className="space-y-5">
+      <div
+        className="px-4 py-4"
+        style={{
+          background: 'linear-gradient(135deg, rgba(var(--tj-tech-cyan), 0.10), rgba(var(--tj-accent-primary), 0.04))',
+          border: '1px solid rgba(var(--tj-tech-cyan), var(--tj-edge-tint))',
+          clipPath: badgeClip,
+        }}
+      >
+        <div className="font-serif text-lg font-bold tracking-[0.24em]" style={{ color: 'rgb(var(--tj-text-primary))' }}>
+          NSFW 设置
+        </div>
+        <div className="mt-2 text-sm leading-relaxed" style={{ color: 'rgba(var(--tj-text-secondary), 0.76)' }}>
+          这里只控制成人向内容授权与私密档案写入。关闭总开关时，正文不注入 NSFW 提示词，变量模型也不应写入 NSFW 档案。
+        </div>
+      </div>
+
+      <ToggleRow
+        label="NSFW 总开关"
+        desc="开启后注入 NSFW 提示词，并允许成人确认与剧情事实成立后的私密档案写入。"
+        checked={settings.enableNsfw}
+        onChange={updateNsfw}
+      />
+
+      <ToggleRow
+        label="男性 NSFW 档案"
+        desc="默认关闭。关闭时不写入男性身体档案、男性私密部位与男性长期私密事实；女性档案不受此开关影响。"
+        checked={settings.enableNsfw && settings.enableMaleNsfwArchive}
+        disabled={!settings.enableNsfw}
+        onChange={(v) => onChange({ ...settings, enableMaleNsfwArchive: v })}
+      />
+
+      <div
+        className="px-4 py-4"
+        style={{
+          background: 'rgba(var(--tj-bg-secondary), 0.45)',
+          border: '1px solid rgba(var(--tj-accent-primary), var(--tj-edge-tint-weak))',
+          clipPath: smallClip,
+        }}
+      >
+        <div className="font-serif text-sm font-bold tracking-[0.18em]" style={{ color: 'linear-gradient(135deg, rgba(var(--tj-accent-primary),0.94), rgba(var(--tj-accent-secondary),0.9))' }}>
+          档案拆分规则
+        </div>
+        <div className="mt-2 space-y-1 text-sm leading-relaxed" style={{ color: 'rgba(var(--tj-text-secondary), 0.76)' }}>
+          <p>女性身体档案：胸部、女性私处、后庭、体态、体味。</p>
+          <p>男性身体档案：男性器、后庭、体态、体味。</p>
+          <p>普通人物外貌、穿着、性格、同行记忆不混写露骨内容。</p>
+        </div>
+      </div>
+
+      <div className="sticky bottom-0 z-10 pt-3" style={{ background: 'linear-gradient(180deg, rgba(var(--tj-bg-primary),0), rgba(var(--tj-bg-primary),0.98) 30%)' }}>
+        {saveMessage && (
+          <div className="mb-2 text-right text-xs" style={{ color: saveMessage.startsWith('保存失败') ? 'rgba(255,180,180,0.92)' : 'rgba(165,230,170,0.92)' }}>
+            {saveMessage}
+          </div>
+        )}
+        <button
+          type="button"
+          onClick={() => void handleSave()}
+          className="relative w-full overflow-hidden py-3 font-serif text-sm font-bold tracking-[0.32em] transition-all hover:opacity-95"
+          style={{
+            color: 'rgb(var(--tj-on-accent))',
+            background: savedFlash
+              ? 'linear-gradient(135deg, rgba(165, 230, 170, 0.96), rgba(105, 190, 130, 0.92))'
+              : 'linear-gradient(135deg, rgba(var(--tj-btn-primary-start), 0.96), rgba(var(--tj-btn-primary-end), 0.84))',
+            border: '1px solid rgba(var(--tj-border), var(--tj-edge-strong))',
+            clipPath: smallClip,
+          }}
+        >
+          {savedFlash ? '✓ 已 保 存' : '◆ 保存 NSFW 设置'}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function ToggleRow({
+  label,
+  desc,
+  checked,
+  disabled = false,
+  onChange,
+}: {
+  label: string;
+  desc: string;
+  checked: boolean;
+  disabled?: boolean;
+  onChange: (v: boolean) => void;
+}) {
+  return (
+    <div
+      className="flex items-center justify-between px-3 py-2"
+      style={{
+        opacity: disabled ? 0.58 : 1,
+        background: 'rgba(var(--tj-bg-secondary), 0.45)',
+        border: '1px solid rgba(var(--tj-accent-primary), var(--tj-edge-tint-weak))',
+        clipPath: mediumClip,
+      }}
+    >
+      <div className="mr-3 min-w-0">
+        <div className="font-serif text-sm font-bold tracking-wider" style={{ color: 'rgb(var(--tj-text-primary))' }}>
+          {label}
+        </div>
+        <div className="mt-0.5 text-xs" style={{ color: 'rgba(var(--tj-text-secondary), 0.65)' }}>
+          {desc}
+        </div>
+      </div>
+      <button
+        type="button"
+        disabled={disabled}
+        onClick={() => onChange(!checked)}
+        className="relative h-6 w-11 flex-shrink-0 transition-all disabled:cursor-not-allowed"
+        style={{
+          background: checked
+            ? 'linear-gradient(135deg, rgba(var(--tj-btn-primary-start), 0.95), rgba(var(--tj-btn-primary-end), 0.86))'
+            : 'rgba(var(--tj-bg-secondary), 0.68)',
+          border: checked
+            ? '1px solid rgba(var(--tj-text-primary), var(--tj-edge))'
+            : '1px solid rgba(var(--tj-accent-primary), var(--tj-edge-tint))',
+          clipPath: smallClip,
+        }}
+      >
+        <div
+          className="absolute top-0.5 h-5 w-5 transition-transform"
+          style={{
+            left: checked ? 'calc(100% - 1.375rem)' : '0.125rem',
+            background: checked ? 'rgb(var(--tj-bg-primary))' : 'rgba(var(--tj-text-secondary), 0.78)',
+            clipPath: tinyClip,
+          }}
+        />
+      </button>
+    </div>
+  );
+}

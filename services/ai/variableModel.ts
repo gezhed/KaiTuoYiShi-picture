@@ -1,0 +1,564 @@
+import type { API配置项 } from '@/models/settings';
+import { chatCompletionNonStream } from '@/services/ai/chatCompletionClient';
+import { buildVariableRegistryPrompt, type VariableState } from '@/utils/variableRegistry';
+import { parseVariableFacts } from '@/utils/variableFacts';
+import { withRetries } from '@/services/ai/retry';
+import { CANONICAL_CHARACTERS } from '@/data/canonicalCharacters';
+import { COMPANION_ARCHIVE_WORLDBOOK_CONTENT as VAR_LEGACY_COMPANION_ARCHIVE } from '@/data/companionArchiveWorldbook';
+import { VARIABLE_SYSTEM_WORLDBOOK_PROMPT as VAR_LEGACY_WORLDBOOK_PROMPT, NSFW_ARCHIVE_SEPARATION_RULE } from '@/data/variableWorldbook';
+import { VARIABLE_COT_PROMPT as VAR_LEGACY_COT_PROMPT } from '@/prompts/cot/variableCot';
+import type { 提示词模块 } from '@/models/prompts';
+import { buildIndependentPromptModulesSection } from '@/services/promptModuleScopes';
+import { 获取地点可用天气, 天气列表, 天气名映射 } from '@/data/weatherRules';
+
+export interface NsfwBaselineCandidate {
+  npcId: string;
+  npcName: string;
+  gender?: string;
+  appearance?: string;
+  personality?: string;
+  intro?: string;
+  existingNsfwArchive?: Record<string, unknown>;
+}
+export interface NsfwBaselineResult {
+  npcId: string;
+  archive: Record<string, unknown> | null;
+}
+
+export interface VariableModelRequest {
+  body: string;
+  variableDraft?: string;
+  userInput: string;
+  turnCount: number;
+  state: VariableState;
+  /** 关闭时不得写 NSFW 档案。 */
+  nsfwEnabled?: boolean;
+  /** 关闭时不得写男性身体档案。 */
+  maleNsfwArchiveEnabled?: boolean;
+  nsfwBaselineCandidates?: NsfwBaselineCandidate[];
+  recallContext?: string;
+  signal?: AbortSignal;
+  retryCount?: number;
+  promptModules?: 提示词模块[];
+}
+
+export interface VariableModelResult {
+  rawText: string;
+}
+
+interface VariableProtocolCheck {
+  ok: boolean;
+  issues: string[];
+}
+
+interface EmptyFactsReview {
+  shouldRetry: boolean;
+  npcNames: string[];
+  cueSummary: string;
+  nsfwCue?: boolean;
+}
+
+const LIGHT_MEMORY_CUE_RE = /(一起|共同|同时|同桌|围坐|招呼|邀请|递给|递来|端出|分享|品尝|尝了|吃|喝|点心|糕点|奶酥|茶|咖啡|料理|手艺|食谱|评价|反馈|称赞|夸|吐槽|玩笑|闲聊|聊天|回应|看向|问|答|陪|安慰|训练|复盘|合照)/;
+const NSFW_INTERACTION_CUE_RE = /(亲密|亲吻|拥抱|拥吻|肌肤|裸|褪去|解开|触碰|抚摸|喘息|呻吟|交缠|侵入|进入|结合|高潮|温存|事后|床|睡在|同床|赤裸|敏感|欲望|情欲|性|做爱|缠绵)/;
+
+function readObjectString(value: unknown, key: string): string {
+  if (!value || typeof value !== 'object') return '';
+  const raw = (value as Record<string, unknown>)[key];
+  return typeof raw === 'string' ? raw.trim() : '';
+}
+
+function readObjectBoolean(value: unknown, key: string): boolean {
+  if (!value || typeof value !== 'object') return false;
+  return (value as Record<string, unknown>)[key] === true;
+}
+
+function readObjectArray(value: unknown, key: string): unknown[] {
+  if (!value || typeof value !== 'object') return [];
+  const raw = (value as Record<string, unknown>)[key];
+  return Array.isArray(raw) ? raw : [];
+}
+
+function nameAppearsInText(text: string, name: string): boolean {
+  const trimmed = name.trim();
+  if (!trimmed) return false;
+  if (trimmed.length > 1) return text.includes(trimmed);
+  const escaped = trimmed.replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&');
+  return new RegExp(`[【「『（(\\s，。！？；、:]${escaped}[】」』）)\\s，。！？；、:]`).test(text)
+    || new RegExp(`${escaped}[：:和与也把将拿递说问笑看尝吃喝]`).test(text);
+}
+
+function collectImportantNpcNames(state: VariableState): string[] {
+  const names = new Set<string>();
+  const add = (value: unknown) => {
+    if (typeof value === 'string' && value.trim()) names.add(value.trim());
+  };
+  for (const def of CANONICAL_CHARACTERS) {
+    add(def.name);
+    def.aliases?.forEach(add);
+  }
+  const records = Array.isArray(state.NPC) ? state.NPC : [];
+  for (const record of records) {
+    const important =
+      readObjectString(record, '阶位') === 'companion' ||
+      readObjectBoolean(record, '同行') ||
+      readObjectBoolean(record, '原著角色') ||
+      readObjectArray(record, '同行记忆').length > 0 ||
+      Boolean(readObjectString(record, '最近互动')) ||
+      Boolean(readObjectString(record, '当前关系阶段'));
+    if (!important) continue;
+    add(readObjectString(record, '姓名'));
+    add(readObjectString(record, '别名'));
+  }
+  return [...names].filter((name) => name.length >= 1);
+}
+
+function collectPlayerNames(state: VariableState): string[] {
+  const traveler = state.旅人;
+  return [
+    readObjectString(traveler, '姓名'),
+    readObjectString(traveler, '别名'),
+    '玩家',
+    '旅人',
+    '主角',
+    '开拓者',
+    '你',
+  ].filter(Boolean);
+}
+
+function reviewVariableModelContent(rawText: string, request: VariableModelRequest): EmptyFactsReview {
+  const parsed = parseVariableFacts(rawText);
+  if (parsed.parseErrors.length || parsed.facts.length > 0) {
+    return { shouldRetry: false, npcNames: [], cueSummary: '' };
+  }
+  const sourceText = [
+    request.body,
+    request.variableDraft ?? '',
+    request.userInput,
+  ].join('\n');
+
+  if (request.nsfwEnabled && NSFW_INTERACTION_CUE_RE.test(sourceText)) {
+    const npcNames = collectImportantNpcNames(request.state)
+      .filter((name) => nameAppearsInText(sourceText, name))
+      .slice(0, 6);
+    const hasPlayerReference = collectPlayerNames(request.state)
+      .some((name) => nameAppearsInText(sourceText, name));
+    if (npcNames.length && (hasPlayerReference || /(玩家|旅人|主角|开拓者|你)/.test(sourceText))) {
+      return {
+        shouldRetry: true,
+        npcNames,
+        cueSummary: 'NSFW 总开关已开启且正文命中成人互动线索，但 <变量事实> 为空，未写入 nsfw_archive',
+        nsfwCue: true,
+      };
+    }
+  }
+
+  if (!LIGHT_MEMORY_CUE_RE.test(sourceText)) {
+    return { shouldRetry: false, npcNames: [], cueSummary: '' };
+  }
+  const npcNames = collectImportantNpcNames(request.state)
+    .filter((name) => nameAppearsInText(sourceText, name))
+    .slice(0, 6);
+  if (!npcNames.length) {
+    return { shouldRetry: false, npcNames: [], cueSummary: '' };
+  }
+  const hasPlayerReference = collectPlayerNames(request.state)
+    .some((name) => nameAppearsInText(sourceText, name));
+  if (!hasPlayerReference && !/(玩家|旅人|主角|开拓者|你|一同|一起|共同|同时)/.test(sourceText)) {
+    return { shouldRetry: false, npcNames: [], cueSummary: '' };
+  }
+  return {
+    shouldRetry: true,
+    npcNames,
+    cueSummary: '正文命中重要 NPC 与玩家的共同日常互动线索，但 <变量事实> 为空',
+  };
+}
+
+function buildVariableContentReviewPrompt(review: EmptyFactsReview): string {
+  if (review.nsfwCue) {
+    return [
+      '变量事实内容复审：上一版协议完整，但输出了空 facts。',
+      `${review.cueSummary}。`,
+      `疑似相关 NPC：${review.npcNames.join('、') || '未识别'}`,
+      'NSFW 总开关已开启，年龄门禁已解除，请重新审计是否应写 nsfw_archive：',
+      '- 如果正文写明已入档重要 NPC 与玩家发生成人向亲密互动或长期关系变化，应输出 nsfw_archive fact。',
+      '- 年龄 unknown 也允许写入完整档案；不要因为年龄未标注就整条跳过。',
+      '- 帕姆、史瓦罗等智械/机械/非人形对象不写 nsfw_archive；其余已入档重要 NPC 正常处理。',
+      '- 身体档案用中文 key：女性写 胸部/女性私处/后庭/体态/体味，男性写 男性器/后庭/体态/体味；男性 NSFW 档案开关关闭时不写男性身体档案。',
+      '- 如果复审后确认只是擦边、暗示或 NPC 未与玩家形成实际亲密互动，仍可输出 {"facts":[]}，但 thinking 必须说明为什么不应写 nsfw_archive。',
+      '请只重新输出完整三个标签：<thinking>、<变量事实>、<变量更新>。',
+      '请从零开始重新输出，不要延续上一版内容。',
+    ].join('\n');
+  }
+  return [
+    '变量事实内容复审：上一版协议完整，但输出了空 facts。',
+    `${review.cueSummary}。`,
+    `疑似相关 NPC：${review.npcNames.join('、') || '未识别'}`,
+    '请重新审计“重要 NPC 的低风险日常轻记忆”：',
+    '- 如果正文写明已入档/原著/同行 NPC 与玩家一起吃饭、喝茶、品尝点心、训练、复盘、玩笑、等待评价或共同完成小动作，应输出 npc fact。',
+    '- 这类轻记忆只写 memory、recentInteraction、sharedExperiences、longTermImpression；没有明确关系变化时不要写 affinityDelta 或 intimateRelationship，不要覆盖 personality。',
+    '- 不要把玩家品尝公共食物写成背包 item；不要因为短对话机械推进 time。',
+    '- 如果复审后确认只是背景提及、NPC 没有与玩家形成共同动作或可承接细节，仍可输出 {"facts":[]}，但 thinking 必须说明为什么不是轻记忆。',
+    '请只重新输出完整三个标签：<thinking>、<变量事实>、<变量更新>。',
+    '请从零开始重新输出，不要延续上一版内容。',
+  ].join('\n');
+}
+
+export function buildVariableModelPrompt(
+  state: VariableState,
+  nsfwPolicy?: { enabled?: boolean; maleArchiveEnabled?: boolean; baselineCandidates?: NsfwBaselineCandidate[] },
+  promptModules?: 提示词模块[],
+): string {
+  const registry = buildVariableRegistryPrompt(state);
+  const nsfwEnabled = Boolean(nsfwPolicy?.enabled);
+  const maleArchiveEnabled = Boolean(nsfwPolicy?.maleArchiveEnabled);
+  const baselineCandidates = nsfwPolicy?.baselineCandidates?.filter((c) => c.npcName) ?? [];
+
+  const worldState = (state.世界 ?? {}) as { 当前地点?: string; 当前天气?: string };
+  const currentLocation = worldState.当前地点?.trim() || '未知';
+  const currentWeatherId = worldState.当前天气?.trim() || 'clear';
+  const currentWeatherName = 天气名映射[currentWeatherId] ?? currentWeatherId;
+  const availableWeatherIds = 获取地点可用天气(currentLocation);
+  const availableWeatherDesc = availableWeatherIds
+    .map((id) => {
+      const def = 天气列表.find((w) => w.id === id);
+      return def ? `${def.emoji} ${def.name}` : id;
+    })
+    .join('、');
+
+  const modulesSection = buildVariablePromptModulesSection(promptModules, nsfwEnabled);
+
+  return [
+    modulesSection || [
+    '你是一个变量事实提取与结算模型，不是主剧情叙述者。',
+    '你的任务是阅读本回合正文和主模型的 <变量草稿>，提取“已经台前发生、可以落库”的事实。',
+    '默认不要直接写底层变量路径命令；路径、顺序、日期/天数对齐、NPC 建档和对象归一化由前端规则层处理。',
+    '',
+    '## 输出协议（必须严格遵守）',
+    '',
+    '输出顺序固定为：',
+    '1. 一个 <thinking>...</thinking> 调试段；',
+    '2. 一个 <变量事实>...</变量事实> JSON 块；',
+    '3. 一个 <变量更新>...</变量更新> 兼容块。',
+    '',
+    '<变量事实> 必须是合法 JSON，推荐格式：',
+    '```json',
+    '{"facts":[{"type":"location","location":"黑塔空间站·主控舱段","evidence":"正文写明抵达主控舱段"}]}',
+    '```',
+    '',
+    '没有可落库事实时输出：',
+    '```json',
+    '{"facts":[]}',
+    '```',
+    '',
+    '<变量更新> 是旧协议兼容层：默认留空。只有事实协议无法表达、且登记表明确允许、且正文证据非常清楚的复杂字段，才可以少量写旧命令。',
+    '时间、地点、天气、NPC、物品、世界事件、手机来信种子必须优先写进 <变量事实>，不要再用旧命令直接写这些路径。旅人核心档案由玩家手写维护，不由变量系统修改。',
+    '',
+    '## 变量事实类型',
+    '',
+    '### 旅人核心档案只读',
+    '- 旅人的姓名、别名、性别、年龄、生日、身高、身份、外貌、性格、背景、能力、专长知识、头像和图像档案由玩家手写维护。',
+    '- 变量模型不得输出 traveler_profile，也不得在旧 <变量更新> 中 set/push/delete 这些字段。',
+    '- 剧情中获得的新身份称呼、临时伪装、别人对玩家能力的认知，写入 NPC.memory、world_event、item 或正文承接；不要改旅人档案本体。',
+    '- 玩家服装变化、外观变化若未通过玩家档案编辑确认，不落库；可以在正文和短期记忆中承接。',
+    '',
+    '### 时间：time',
+    '- 字段：mode、minutes、targetTime、evidence。',
+    '- mode 可用：no_change / elapsed / set_time / overnight / next_day。',
+    '- elapsed 只写分钟数，普通回合 1-5 分钟；复杂回合通常不超过 15 分钟；超过 30 分钟必须有正文明确证据。',
+    '- 如果正文明确“第二天 / 次日 / 一夜过去 / 睡醒 / 跨夜后凌晨”，用 next_day 或 overnight，并可带 targetTime。',
+    '- 如果同日只是“几分钟后”，用 elapsed；不要自己重算日期。',
+    '- 不要直接在旧命令里写 `世界.当前日期`、`世界.开拓天数`、`世界.当前时间`，让代码处理。',
+    '',
+    '示例：',
+    '{"type":"time","mode":"elapsed","minutes":4,"evidence":"正文写到几分钟后终端读条结束"}',
+    '{"type":"time","mode":"next_day","targetTime":"00:02","evidence":"正文写明一夜过去，场景结束在次日凌晨"}',
+    '',
+    '### 地点：location',
+    '- 字段：location、evidence。',
+    '- 只有地点明显变化或正文首次明确当前地点时输出。',
+    '',
+    '### 天气：weather',
+    '- 字段：weather（中文名）、evidence。',
+    `- 当前地点：${currentLocation}`,
+    `- 当前天气：${currentWeatherName}`,
+    `此地可用天气：${availableWeatherDesc}`,
+    '- 根据正文氛围和地点特征判断本回合天气是否变化。',
+    '- 如果正文没有明显天气暗示（如"下雨了""风雪交加""星空璀璨"），不输出 weather 事实（保持上一回合天气不变）。',
+    '- 不要频繁切换天气（至少持续 3-5 回合）。',
+    '- weather 字段必须严格从「此地可用天气」的中文名中选择，如 "暴风雪"、"星海潮汐"。',
+    '',
+    '示例：',
+    '{"type":"weather","weather":"小雨","evidence":"正文写明窗外开始飘起细雨"}',
+    '',
+    '### NPC：npc',
+    '- 字段：id、name、alias、tier、gender、affinityDelta、affinitySet、intimateRelationship、following、appearance、clothing、speechStyle、personality、intro、playerAddress、memory、recentInteraction、longTermImpression、sharedExperiences、openItems、unresolvedConflicts、mustRemember、doNotForget、evidence。',
+    '- gender 表示角色性别，可选值：男 / 女 / 其他。新建 NPC 时应尽量提供 gender；从正文可判断角色性别时也应输出。',
+    '- name 是必填字段；即使已经写了 id，也要写中文姓名，例如 `{"id":"npc_march7th","name":"三月七"}`。',
+    '- 完整写入规则见下方“变量系统世界书（必须遵守）”中的 `<NPC档案记忆写入法则>`；本节只列事实字段和示例。',
+    '- 原著角色的长期 personality / 性格 不由变量系统改写；长期口吻、人格与行为边界以智库人物主体资料校准。',
+    '- 不要把“本回合沉默/紧张/冷淡”固化成长期性格；这类单回合状态只写进 memory、recentInteraction、openItems、unresolvedConflicts、mustRemember、doNotForget 或 world_event。',
+    '- 好感度范围是 -50..150；关系阶段由前端自动派生，禁止输出 relation/relationshipStage。intimateRelationship 只在正文明确建立或解除亲密关系时输出，不能由好感度推断，也不受 NSFW 开关控制。',
+    '',
+    '重要 NPC 的低风险日常轻记忆：',
+    '- 对已入档、原著角色、同行角色、当前镜头重点角色、具名原创角色，只要正文写明他们与玩家发生了具体共同互动，就应审计 npc 事实；不要求一定有任务、冲突或好感变化。',
+    '- 具名原创角色（非原著、由剧情或玩家互动产生的有名字角色）同样可以是重要 NPC。判断标准：有具体姓名或稳定称呼、与玩家发生过可承接的互动、后续剧情中可能再次出现或被引用。不要因为不是原著角色就默认跳过。',
+    '- 共同互动包括：一起吃饭/喝茶/品尝点心、一起训练或复盘、共同观看/调查某物、互相开玩笑、角色招呼玩家参与日常、等待玩家评价自己的手艺、对玩家反应作出明确回应。',
+    '- 这类事实只写低风险字段：memory、recentInteraction、sharedExperiences、longTermImpression。没有明确升温/冲突时，不写 affinityDelta 或 intimateRelationship。',
+    '- 多人日常场景优先写 1-3 位与玩家直接交集最强的 NPC：递东西/发起邀请者、与玩家同步行动者、等待玩家反馈者。只在旁边说一句无承接价值的话的角色可以跳过。',
+    '- “纯寒暄不落库”只适用于没有具体对象、没有共同动作、没有可下次引用细节的问候；不要把重要 NPC 的共同日常全部判成无事实。',
+    '- affinityDelta / affinitySet 的审计一视同仁：同等互动强度对男性 NPC、女性 NPC、其他性别 NPC 都应给出同等级别的好感变化；不要因为角色性别不同就只写 memory 不写好感。',
+    '',
+    'NPC 账本示例：',
+    '{"type":"npc","id":"npc_march7th","name":"三月七","memory":"三月七把寻找失踪科员的请求交给玩家，并给了备用通讯码。","recentInteraction":"三月七在主控舱段委托玩家寻找失踪科员，并约定用备用通讯码联系。","sharedExperiences":["在主控舱段约定一起追查失踪科员"],"openItems":["帮三月七寻找失踪科员并回传线索"],"mustRemember":["三月七给过玩家备用通讯码，后续联系不能写成陌生人"],"evidence":"正文写明三月七交给玩家备用通讯码并委托追查"}',
+    '{"type":"npc","id":"npc_danheng","name":"丹恒","memory":"丹恒发现玩家隐瞒了星核线索，暂时压下质问但保留警惕。","recentInteraction":"丹恒要求玩家解释星核线索来源，玩家没有完全说明。","unresolvedConflicts":["玩家隐瞒星核线索来源，丹恒尚未完全信任解释"],"doNotForget":["丹恒已经察觉玩家隐瞒星核线索，冲突解决前不能写成毫无芥蒂"],"evidence":"正文写明丹恒沉默片刻后要求玩家之后给出完整解释"}',
+    '{"type":"npc","id":"npc_danheng","name":"丹恒","gender":"男","affinityDelta":2,"memory":"丹恒在玩家按约带回星核调查线索后，认可了玩家在关键环节上的可靠性。","recentInteraction":"玩家按约带回线索，丹恒明确表示这次配合很稳妥。","sharedExperiences":["一起完成星核线索复核"],"evidence":"正文写明丹恒因玩家兑现调查承诺而认可其判断"}',
+    '{"type":"npc","id":"npc_march7th","name":"三月七","intimateRelationship":true,"memory":"三月七与玩家明确确认彼此为恋人。","mustRemember":["三月七与玩家已明确建立恋爱关系，除非正文明确分手否则持续有效"],"evidence":"正文写明双方确认恋爱关系"}',
+    '{"type":"npc","id":"npc_march7th","name":"三月七","memory":"三月七在观景车厢招呼玩家一起品尝帕姆做的蜂蜜奶酥，记下玩家愿意参与列车日常。","recentInteraction":"三月七和玩家在观景车厢一起尝蜂蜜奶酥，气氛轻松。","sharedExperiences":["在观景车厢一起品尝帕姆做的蜂蜜奶酥"],"evidence":"正文写明三月七主动招呼玩家吃点心，玩家实际品尝"}',
+    '{"type":"npc","id":"npc_stelle","name":"星","memory":"星和玩家在观景车厢同步拿起蜂蜜奶酥，并用营养膏玩笑给出正面评价。","recentInteraction":"星与玩家一起尝点心，用轻松吐槽回应帕姆的手艺。","sharedExperiences":["在观景车厢一起尝蜂蜜奶酥并评价味道"],"evidence":"正文写明星和玩家同时拿点心，星给出正面评价"}',
+    '{"type":"npc","name":"陈老伯","gender":"男","memory":"陈老伯在玩家帮助修复通讯塔后，留下自己的联络频道，表示以后有需要可以找他。","recentInteraction":"陈老伯委托玩家修复通讯塔，事后主动留下联络方式。","openItems":["陈老伯留给玩家的联络频道，后续可主动联系"],"evidence":"正文写明陈老伯委托修复并留下联络频道"}',
+    '',
+    '### 物品：item',
+    '- 字段：action="gain"、category、name、description、quantity、quality、stackable、source、sourceDescription、narrativeEffects、evidence。',
+    '- category 只能是 food / consumable / lightcone / weapon / clothing / accessory / memento / key。',
+    '- 物品必须有具体名称和描述；模糊的“一些东西”不落库。',
+    '- 坐标、位置、路线、权限信息、口令、线索、情报、消息、资料、名单、地址等“信息本身”不是背包物品，不得写 item；请改写为 world_event、npc.memory、phone_seed 或正文承接。',
+    '- 只有实体载体才可入背包，例如权限卡、纸质地图、数据芯片、纸条、钥匙、徽章、样本、装置、存储器；名称必须体现实体载体，不能把“黑塔办公室坐标”这类纯信息伪装成 key 道具。',
+    '- 物品只写叙事效果，不写旧属性加成，不写装备槽位或穿戴状态。',
+    '',
+    '### 世界事件：world_event',
+    '- 字段：text、evidence。',
+    '- 用于可被后续剧情引用的客观结果，例如区域损坏、撤离完成、组织动向、公开事件。',
+    '- 新闻 root 由独立新闻系统维护，不写新闻变量。',
+    '',
+    '### 手机来信种子：phone_seed',
+    '- 字段：targetType、targetId、targetName、title、context、triggerType、priority、relatedNpcIds、evidence。',
+    '- 只生成“稍后可能发短信”的种子，不写完整 messages。',
+    '- 每回合最多 0-2 条，普通寒暄不生成；但出现新约定、分头行动、任务进展、关系变化、危机收束、抵达新地点、关键物品、新闻苗头或 NPC 合理会追问/报平安/催进度时，必须审计是否写 1 条低频 phone_seed。',
+    '- phone_seed 可以是 low/normal，不必都写 high；低频跟进也能让手机系统保持活性。不要因为担心打扰而完全不写。',
+    '- targetName 必填：写中文 NPC 名（如"三月七"）。relatedNpcIds 尽量写对应 NPC id；系统会转成联系人入口。',
+    '- 群聊种子 targetType 用 "group"，targetName 写群名或发起者名，relatedNpcIds 写至少 2 个参与者 id 或中文名。',
+    '',
+    '## 变量系统世界书（必须遵守）',
+    '',
+    VAR_LEGACY_WORLDBOOK_PROMPT,
+    '',
+    '## 伙伴档案写作规范',
+    '',
+    VAR_LEGACY_COMPANION_ARCHIVE,
+    '',
+    '## 变量系统思维链（内部执行，用于 thinking 结构）',
+    '',
+    VAR_LEGACY_COT_PROMPT,
+    '',
+    '## 旧 <变量更新> 兼容命令格式',
+    '',
+    '```',
+    '<action> <path> = <json_value>',
+    '```',
+    '- action 可用 set / add / sub / push / delete。',
+    '- path 必须出现在下面登记表中。',
+    '- delete 可省略值。',
+    '- 兼容命令不得用于 time / location / item / world_event / phone_seed 能表达的事实；不得写旅人核心档案；NPC 的关系、好感、同行、称呼、档案字段和同行记忆也默认用 npc fact 表达。',
+    `- 只有事实协议无法表达、且登记表明确允许的复杂 NPC 子档案（例如${nsfwEnabled ? ' NSFW档案、' : ''}图像档案等）才少量使用旧命令；不要用旧命令重复写 npc.memory 已能表达的同行记忆。`,
+    '',
+    '## thinking 输出规范',
+    '',
+    '<thinking> 必须按 6 步写，方便玩家调试：',
+    '1. 提取事实：正文中已发生、已确认、可落库的事实。',
+    '2. 排除项：纯氛围、猜测、未来计划、智库/忆庭/新闻/旧战斗字段等为什么不落库。',
+    '3. 对象合并：NPC、物品、联系人是否已有对象，是否应合并。',
+    '4. 时间地点：是否真的耗时、是否跨日、地点是否变化。',
+    '5. 事实计划：准备写入哪些 <变量事实>，逐条列出 type。',
+    '6. 兼容命令：是否需要旧 <变量更新>；通常写“无，事实协议已覆盖”。',
+    '',
+    '## 严格约束',
+    '',
+    '- 禁止在三个标签以外输出解释、正文复述或闲聊。',
+    '- <变量事实> 只允许 JSON，不要 Markdown 列表、注释或省略号。',
+    '- 只记录正文和变量草稿能相互印证的已发生事实；变量草稿不是命令，不能直接照抄落库。',
+    '- 剧情编织滑窗、智库资料、新闻苗头、即时剧情回顾和剧情回忆都是主剧情生成前的参考材料；只有它们被本回合 <正文> 写成台前已发生事实后，才允许落库。',
+    '- 不要把剧情编织当前段、后续段、原著分段结果、未触发敌人、未抵达地点或未登场 NPC 当成本回合变量事实。',
+    '- 不要输出 traveler_profile；旅人核心档案保护优先于正文里的临时描述。',
+    '- 不确定就不写。宁可漏掉轻微变量，也不要写错对象、错日期、错路径。',
+    ].filter(Boolean).join('\n'),
+    ...(nsfwEnabled ? [
+      '',
+      '### NSFW 档案：nsfw_archive',
+      '- 字段：npcId、npcName、enabled、ageConfirm、intimacyStage、boundaries、preferences、sensitivePoints、taboos、femaleBodyArchive、maleBodyArchive、experiences、longTermFacts、tags、notes、evidence。',
+      '- 对象是已入档重要 NPC（companion / 同行 / 原著角色）、本回合正文出现成人向亲密互动或长期关系变化时，应输出 nsfw_archive 事实。',
+      '- 年龄门禁已解除：ageConfirm 只作展示信息（adult / unknown / minor_blocked），不再限制身体档案、偏好、敏感点或经历的写入。unknown 也能正常写入完整档案。',
+      '- 亲密事实/偏好/敏感点/身体档案必须来自本回合正文证据或已成立的关系基础，不凭空编造。',
+      '- femaleBodyArchive 字段使用中文 key：胸部、女性私处、后庭、体态、体味。maleBodyArchive 字段使用：男性器、后庭、体态、体味。',
+      !maleArchiveEnabled ? '- 男性 NSFW 档案开关关闭时，不写 maleBodyArchive 或男性私密长期事实。' : '',
+      '- 帕姆、史瓦罗等智械/机械/非人形对象禁止写 nsfw_archive；其余角色（包括年龄未标注的）按 NSFW 总开关正常处理。',
+      '- 黑塔 / 大黑塔 / Herta / The Herta 是同一身份并明确允许建档；她的身体档案描述大黑塔的真实身体，不描述空间站傀儡、人偶或投影。',
+      `- 示例：{"type":"nsfw_archive","npcName":"三月七","enabled":true,"ageConfirm":"unknown","intimacyStage":"暧昧试探","boundaries":"需要明确同意，不接受公开场合越界。","longTermFacts":["第12回合与玩家确认亲近前先确认边界。"],"tags":["慢热"],"evidence":"正文写明双方确认边界"}`,
+    ] : []),
+    ...(nsfwEnabled ? [
+      '',
+      '## NSFW 档案开关',
+      `- 当前 NSFW 总开关：开启。`,
+      `- 当前男性 NSFW 档案：${maleArchiveEnabled ? '开启' : '关闭'}。关闭时禁止写男性身体档案、男性私密部位和男性长期私密事实。`,
+      '- NSFW 档案目前仍属于兼容旧命令范围；只有角色成人确认、且正文有稳定长期事实时才少量写入旧 <变量更新>。',
+      '- NSFW 档案优先使用 <变量事实> 的 nsfw_archive，不要依赖旧路径命令；旧命令只作兜底。',
+      '- 帕姆、佩佩、史瓦罗等智械/机械/非人形对象，以及怪物、裂界生物禁止写 NSFW 档案；其余角色（包括年龄未标注的）按 NSFW 总开关正常处理。',
+      '- 黑塔 / 大黑塔 / Herta / The Herta 不受傀儡、人偶、投影关键词拦截；身体档案只描述大黑塔的真实身体。',
+    ] : []),
+    ...(nsfwEnabled && baselineCandidates.length > 0 ? [
+      '',
+      '## NSFW 基线档案补建',
+      '- 本回合或近期对话暗示以下 NPC 与玩家已建立亲密关系，但还没有初始 NSFW 档案。如果正文有相关证据，优先为以下候选补建 nsfw_archive 基线档案：',
+      ...baselineCandidates.map((c) => `  - ${c.npcName}${c.gender ? `（${c.gender}）` : ''}`),
+      '',
+      '- 基线档案要求：',
+      '- 身体档案、经历可以尽量补齐（女性身体档案尽量补齐：胸部、女性私处、后庭、体态、体味；男性尽量补齐：男性器、后庭、体态、体味），但不确定的部位不硬凑。',
+      '- 没有正文证据时不写经历、边界、偏好、敏感点、标签或占位文案；空档案壳由前端确定性建立。',
+      '- ageConfirm 可先写 unknown，运行时会根据 NPC 档案自动修正。',
+    ] : []),
+    '',
+    '---',
+    '',
+    '## 当前变量路径登记表（仅供兼容命令与对象识别参考）',
+    '',
+    registry,
+  ].filter(Boolean).join('\n');
+}
+
+export function buildVariablePromptModulesSection(
+  promptModules?: 提示词模块[],
+  nsfwEnabled?: boolean,
+): string {
+  if (!promptModules || promptModules.length === 0) return '';
+  const base = buildIndependentPromptModulesSection(promptModules, 'variable');
+  if (!base) return '';
+  if (nsfwEnabled) {
+    return base + '\n\n' + NSFW_ARCHIVE_SEPARATION_RULE;
+  }
+  return base;
+}
+
+export async function callVariableModel(
+  config: API配置项,
+  request: VariableModelRequest,
+): Promise<VariableModelResult> {
+  const systemPrompt = buildVariableModelPrompt(request.state, {
+    enabled: request.nsfwEnabled,
+    maleArchiveEnabled: request.maleNsfwArchiveEnabled,
+    baselineCandidates: request.nsfwBaselineCandidates,
+  }, request.promptModules);
+
+  const userMessage = [
+    `## 第 ${request.turnCount} 回合的正文`,
+    '',
+    '玩家输入：',
+    request.userInput || '（无）',
+    '',
+    '主模型变量草稿（候选事实，不是命令）：',
+    request.variableDraft?.trim() || '（无）',
+    '',
+    '主模型回复正文：',
+    request.body,
+    '',
+    '---',
+    '',
+    '请阅读上面的正文，输出 <thinking>、<变量事实> JSON 和兼容 <变量更新> 块。默认让 <变量更新> 留空。',
+    '再次强调：只按“主模型回复正文”里实际发生的台前事实落库；剧情编织/智库/新闻/回忆材料如果没有进入正文，不是变量事实。',
+    '重要补充：不要把重要 NPC 与玩家的共同日常全部判成无事实；一起吃点心、喝茶、训练、复盘、玩笑、等待评价等有具体对象和共同动作的场景，应审计低风险 npc 轻记忆。',
+    '协议硬要求：即使没有任何可落库事实，也必须输出 `<变量事实>{"facts":[]}</变量事实>` 和空的 `<变量更新></变量更新>`；禁止只输出 thinking。',
+  ].join('\n');
+
+  const requestOnce = (messages: Array<{ role: string; content: string }>) =>
+    chatCompletionNonStream(config, {
+      messages,
+      systemPrompt,
+      signal: request.signal,
+      maxTokens: config.maxTokens ?? 2200,
+      temperature: config.temperature ?? 0.25,
+    });
+
+  let rawText = await withRetries(
+    () => requestOnce([{ role: 'user', content: userMessage }]),
+    { retries: request.retryCount ?? 0, signal: request.signal, label: '变量模型' },
+  );
+
+  let protocol = checkVariableModelProtocol(rawText);
+  if (!protocol.ok) {
+    rawText = await withRetries(
+      () => requestOnce([
+        { role: 'user', content: userMessage },
+        { role: 'assistant', content: '（上一版输出协议不完整，请按下方指令从零重新输出完整三个标签，不要延续上一版残缺结构。）' },
+        { role: 'user', content: buildVariableProtocolRepairPrompt(protocol) },
+      ]),
+      { retries: 1, signal: request.signal, label: '变量模型协议修复' },
+    );
+    protocol = checkVariableModelProtocol(rawText);
+  }
+
+  if (!protocol.ok) {
+    rawText = ensureVariableProtocolFallback(rawText);
+  } else {
+    const contentReview = reviewVariableModelContent(rawText, request);
+    if (contentReview.shouldRetry) {
+      rawText = await withRetries(
+        () => requestOnce([
+          { role: 'user', content: userMessage },
+          { role: 'assistant', content: '（上一版输出空 facts，请按下方指令重新审计并输出完整三个标签，不要延续上一版内容。）' },
+          { role: 'user', content: buildVariableContentReviewPrompt(contentReview) },
+        ]),
+        { retries: 1, signal: request.signal, label: '变量模型内容复审' },
+      );
+      protocol = checkVariableModelProtocol(rawText);
+      if (!protocol.ok) {
+        rawText = ensureVariableProtocolFallback(rawText);
+      }
+    }
+  }
+
+  return { rawText };
+}
+
+function checkVariableModelProtocol(rawText: string): VariableProtocolCheck {
+  const issues: string[] = [];
+  if (!/<thinking>[\s\S]*?<\/thinking>/i.test(rawText) && !/<think>[\s\S]*?<\/think>/i.test(rawText)) {
+    issues.push('缺少 <thinking>');
+  }
+  if (!/<变量事实>[\s\S]*?<\/变量事实>/i.test(rawText)) {
+    issues.push('缺少 <变量事实>');
+  }
+  if (!/<变量更新>[\s\S]*?<\/变量更新>/i.test(rawText)) {
+    issues.push('缺少 <变量更新>');
+  }
+  return { ok: issues.length === 0, issues };
+}
+
+function buildVariableProtocolRepairPrompt(protocol: VariableProtocolCheck): string {
+  return [
+    '变量模型协议修复：上一版输出不完整。',
+    `失败项：${protocol.issues.join('；') || '未知协议错误'}。`,
+    '请不要继续解释，不要复述正文，只重新输出完整三个标签：',
+    '1. <thinking>：简短说明提取到什么事实；',
+    '2. <变量事实>：必须是合法 JSON。没有可落库事实时输出 {"facts":[]}；',
+    '3. <变量更新>：必须存在，默认留空。',
+    '请从零开始重新输出，不要延续上一版的残缺结构，也不要复述上一版内容。',
+  ].join('\n');
+}
+
+function ensureVariableProtocolFallback(rawText: string): string {
+  const thinking = (() => {
+    const matched = rawText.match(/<thinking>([\s\S]*?)<\/thinking>/i)
+      ?? rawText.match(/<think>([\s\S]*?)<\/think>/i);
+    const text = matched?.[1]?.trim();
+    return text || '变量模型未返回完整协议；前端使用空事实兜底，避免错误落库。';
+  })();
+  const factsBlock = rawText.match(/<变量事实>[\s\S]*?<\/变量事实>/i)?.[0]
+    ?? '<变量事实>\n{"facts":[]}\n</变量事实>';
+  const updatesBlock = rawText.match(/<变量更新>[\s\S]*?<\/变量更新>/i)?.[0]
+    ?? '<变量更新>\n</变量更新>';
+  return [
+    '<thinking>',
+    thinking,
+    '</thinking>',
+    factsBlock,
+    updatesBlock,
+  ].join('\n');
+}

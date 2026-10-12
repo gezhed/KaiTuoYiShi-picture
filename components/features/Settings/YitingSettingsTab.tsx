@@ -1,0 +1,714 @@
+import { useMemo, useState } from 'react';
+import type { AI提供商, API设置, 游戏设置, 忆庭API覆盖 } from '@/models/settings';
+import type { ConnectionTestConfig, ConnectionTestResult } from '@/hooks/useAiTools';
+import { resolveMainApiConfig } from '@/services/apiConfig';
+import { cardClip, providerOptions, smallClip } from './settingsShared';
+import { mediumClip, tinyClip } from '@/components/ui/clipPaths';
+
+interface Props {
+  settings: 游戏设置;
+  onChange: (s: 游戏设置) => void;
+  apiSettings: API设置;
+  onPersistSettings: (s: 游戏设置) => Promise<void>;
+  fetchModels: (config: ConnectionTestConfig) => Promise<string[]>;
+  testConnection: (config: ConnectionTestConfig) => Promise<ConnectionTestResult>;
+}
+
+interface ResolvedApi {
+  provider: AI提供商;
+  baseUrl: string;
+  apiKey: string;
+  model: string;
+  maxTokens?: number;
+  temperature?: number;
+  retryCount: number;
+  enableClaudeMode?: boolean;
+}
+
+export function YitingSettingsTab({ settings, onChange, apiSettings, onPersistSettings, fetchModels, testConnection }: Props) {
+  const memory = settings.记忆系统;
+  const mainConfig = resolveMainApiConfig(apiSettings);
+
+  const [recallLoadingModels, setRecallLoadingModels] = useState(false);
+  const [recallModelOptions, setRecallModelOptions] = useState<string[]>([]);
+  const [recallTestResult, setRecallTestResult] = useState<ConnectionTestResult | null>(null);
+  const [recallMessage, setRecallMessage] = useState<{ kind: 'info' | 'error'; text: string } | null>(null);
+
+  const [archiveLoadingModels, setArchiveLoadingModels] = useState(false);
+  const [archiveModelOptions, setArchiveModelOptions] = useState<string[]>([]);
+  const [archiveTestResult, setArchiveTestResult] = useState<ConnectionTestResult | null>(null);
+  const [archiveMessage, setArchiveMessage] = useState<{ kind: 'info' | 'error'; text: string } | null>(null);
+
+  const [savedFlash, setSavedFlash] = useState(false);
+  const [saveMessage, setSaveMessage] = useState<{ kind: 'info' | 'error'; text: string } | null>(null);
+
+  const patchMemory = (patch: Partial<typeof memory>) => {
+    onChange({
+      ...settings,
+      记忆系统: {
+        ...memory,
+        ...patch,
+      },
+    });
+  };
+
+  const buildEffective = (api: 忆庭API覆盖): ResolvedApi => ({
+    provider: (api.provider || mainConfig?.provider || 'openai_compatible'),
+    baseUrl: api.baseUrl.trim() || mainConfig?.baseUrl || '',
+    apiKey: api.apiKey.trim() || mainConfig?.apiKey || '',
+    model: api.model.trim() || mainConfig?.model || '',
+    maxTokens: api.maxTokens ?? mainConfig?.maxTokens,
+    temperature: api.temperature ?? mainConfig?.temperature,
+    retryCount: api.retryCount,
+    enableClaudeMode: settings.enableClaudeMode,
+  });
+
+  const recallEffective = buildEffective(memory.忆庭召回API);
+  const archiveEffective = buildEffective(memory.忆庭精炼API);
+
+  const recallModelChoices = useMemo(() => uniqueModels([recallEffective.model, ...recallModelOptions]), [
+    recallEffective.model,
+    recallModelOptions,
+  ]);
+  const archiveModelChoices = useMemo(() => uniqueModels([archiveEffective.model, ...archiveModelOptions]), [
+    archiveEffective.model,
+    archiveModelOptions,
+  ]);
+
+  const patchRecallApi = (patch: Partial<typeof memory.忆庭召回API>) => {
+    patchMemory({
+      忆庭召回API: {
+        ...memory.忆庭召回API,
+        ...patch,
+      },
+    });
+  };
+
+  const patchArchiveApi = (patch: Partial<typeof memory.忆庭精炼API>) => {
+    patchMemory({
+      忆庭精炼API: {
+        ...memory.忆庭精炼API,
+        ...patch,
+      },
+    });
+  };
+
+  const fetchRecallModels = async () => {
+    if (!recallEffective.baseUrl || !recallEffective.apiKey) {
+      setRecallMessage({
+        kind: 'error',
+        text: mainConfig
+          ? '忆庭召回会回退主 API；如果主 API 也没配，请先补全。'
+          : '请先填写忆庭召回 API 的 Base URL 和 API Key，或先配置主 API。',
+      });
+      return;
+    }
+    setRecallLoadingModels(true);
+    setRecallMessage(null);
+    try {
+      const list = await fetchModels({ ...recallEffective, name: '忆庭召回' });
+      setRecallModelOptions(list);
+      if (list.length > 0 && !list.includes(memory.忆庭召回API.model.trim())) {
+        patchRecallApi({ model: list[0] });
+      }
+      setRecallMessage({ kind: 'info', text: `已获取 ${list.length} 个模型。` });
+    } catch (err) {
+      setRecallMessage({ kind: 'error', text: `获取模型失败：${err instanceof Error ? err.message : String(err)}` });
+    } finally {
+      setRecallLoadingModels(false);
+    }
+  };
+
+  const testRecall = async () => {
+    if (!recallEffective.baseUrl || !recallEffective.apiKey || !recallEffective.model) {
+      setRecallTestResult({ ok: false, detail: '请先补全忆庭召回 API 的 Base URL / API Key / Model。' });
+      return;
+    }
+    try {
+      const result = await testConnection({ ...recallEffective, name: '忆庭召回' });
+      setRecallTestResult(result);
+    } catch (err) {
+      setRecallTestResult({ ok: false, detail: err instanceof Error ? err.message : String(err) });
+    }
+  };
+
+  const fetchArchiveModels = async () => {
+    if (!archiveEffective.baseUrl || !archiveEffective.apiKey) {
+      setArchiveMessage({
+        kind: 'error',
+        text: mainConfig
+          ? '忆庭精炼会回退主 API；如果主 API 也没配，请先补全。'
+          : '请先填写忆庭精炼 API 的 Base URL 和 API Key，或先配置主 API。',
+      });
+      return;
+    }
+    setArchiveLoadingModels(true);
+    setArchiveMessage(null);
+    try {
+      const list = await fetchModels({ ...archiveEffective, name: '忆庭精炼' });
+      setArchiveModelOptions(list);
+      if (list.length > 0 && !list.includes(memory.忆庭精炼API.model.trim())) {
+        patchArchiveApi({ model: list[0] });
+      }
+      setArchiveMessage({ kind: 'info', text: `已获取 ${list.length} 个模型。` });
+    } catch (err) {
+      setArchiveMessage({ kind: 'error', text: `获取模型失败：${err instanceof Error ? err.message : String(err)}` });
+    } finally {
+      setArchiveLoadingModels(false);
+    }
+  };
+
+  const testArchive = async () => {
+    if (!archiveEffective.baseUrl || !archiveEffective.apiKey || !archiveEffective.model) {
+      setArchiveTestResult({ ok: false, detail: '请先补全忆庭精炼 API 的 Base URL / API Key / Model。' });
+      return;
+    }
+    try {
+      const result = await testConnection({ ...archiveEffective, name: '忆庭精炼' });
+      setArchiveTestResult(result);
+    } catch (err) {
+      setArchiveTestResult({ ok: false, detail: err instanceof Error ? err.message : String(err) });
+    }
+  };
+
+  const handleSave = async () => {
+    try {
+      await onPersistSettings(settings);
+      setSavedFlash(true);
+      setSaveMessage({ kind: 'info', text: '忆庭设置已保存。' });
+      window.setTimeout(() => setSavedFlash(false), 1800);
+    } catch (err) {
+      setSavedFlash(false);
+      setSaveMessage({ kind: 'error', text: `保存失败：${err instanceof Error ? err.message : String(err)}` });
+    }
+  };
+
+  return (
+    <div className="space-y-5">
+      <div
+        className="px-4 py-3 text-xs leading-relaxed"
+        style={{
+          color: 'rgba(var(--tj-text-secondary), 0.78)',
+          background: 'rgba(var(--tj-accent-primary), 0.05)',
+          border: '1px solid rgba(var(--tj-accent-primary), var(--tj-edge-tint-weak))',
+          clipPath: cardClip,
+        }}
+      >
+        <div className="mb-1 font-serif text-[13px] tracking-[0.18em]" style={{ color: 'linear-gradient(135deg, rgba(var(--tj-accent-primary),0.94), rgba(var(--tj-accent-secondary),0.9))' }}>
+          忆庭
+        </div>
+        回忆库的独立接口分成两层：召回负责检索可注入的记忆，精炼负责把材料压成可回看的摘要与原文层。
+      </div>
+
+      <Section title="系统开关">
+        <ToggleField
+          label="启用忆庭召回"
+          desc="开启后，达到触发回合后会检索回忆档案并注入主剧情。关闭只停止召回，回合纪要仍会入库，方便之后重新开启。"
+          checked={memory.忆庭启用}
+          onChange={(checked) => patchMemory({ 忆庭启用: checked })}
+        />
+        <ToggleField
+          label="启用独立精炼"
+          desc="开启后，忆庭入库会调用精炼 API 生成概要；关闭时使用主剧情小总结和本地格式兜底。"
+          checked={memory.忆庭独立精炼}
+          onChange={(checked) => patchMemory({ 忆庭独立精炼: checked })}
+        />
+        <ToggleField
+          label="命中时并存注入记忆"
+          desc="默认开启：忆庭命中后短/中/长记忆照常并存互补。关闭后命中时暂停短期/中期注入，长期只留最近 3 条锚点，旧事承接交给剧情回忆。"
+          checked={memory.忆庭命中并存注入}
+          onChange={(checked) => patchMemory({ 忆庭命中并存注入: checked })}
+        />
+        <NumberField
+          label="完整原文条数 N"
+          value={memory.剧情回忆完整原文条数N}
+          onChange={(value) => patchMemory({ 剧情回忆完整原文条数N: Math.max(1, Math.trunc(value)) })}
+          hint="回忆候选池中最近 N 条向检索模型展示完整原文，更早的只展示概括（默认 20）。"
+        />
+      </Section>
+
+      <ApiSection
+        title="回忆接口"
+        description="这里负责从回忆库里检索记忆，返回给主剧情做注入。"
+        api={memory.忆庭召回API}
+        effective={recallEffective}
+        modelOptions={recallModelChoices}
+        loadingModels={recallLoadingModels}
+        message={recallMessage}
+        testResult={recallTestResult}
+        onPatch={patchRecallApi}
+        onFetchModels={() => void fetchRecallModels()}
+        onTest={() => void testRecall()}
+        mainConfig={mainConfig}
+      />
+
+      <ApiSection
+        title="精炼接口"
+        description="这里负责把回合材料压成回忆档案的摘要与原文层。"
+        api={memory.忆庭精炼API}
+        effective={archiveEffective}
+        modelOptions={archiveModelChoices}
+        loadingModels={archiveLoadingModels}
+        message={archiveMessage}
+        testResult={archiveTestResult}
+        onPatch={patchArchiveApi}
+        onFetchModels={() => void fetchArchiveModels()}
+        onTest={() => void testArchive()}
+        mainConfig={mainConfig}
+      />
+
+      <Section title="精炼规则">
+        <TextareaField
+          label="回忆库精炼提示词"
+          value={memory.忆庭精炼提示词}
+          onChange={(value) => patchMemory({ 忆庭精炼提示词: value })}
+          rows={8}
+          hint="用于把多回合材料压成摘要与原文两层，摘要要短，原文要完整，不要变成新剧情。"
+        />
+      </Section>
+
+      <div className="flex flex-col items-stretch gap-2 pt-1">
+        <button
+          type="button"
+          onClick={() => void handleSave()}
+          className="w-full py-3 text-sm font-serif tracking-[0.4em] transition-all hover:opacity-90"
+          style={{
+            background: savedFlash
+              ? 'linear-gradient(135deg, rgba(140, 220, 160, 0.95), rgba(100, 180, 130, 0.95))'
+              : 'linear-gradient(135deg, rgba(var(--tj-btn-primary-start), 0.96), rgba(var(--tj-btn-primary-end), 0.84))',
+            color: 'rgb(var(--tj-on-accent))',
+            border: savedFlash
+              ? '1px solid rgba(220, 255, 230, var(--tj-edge-tint-strong))'
+              : '1px solid rgba(var(--tj-text-primary), var(--tj-edge))',
+            clipPath: cardClip,
+          }}
+        >
+          {savedFlash ? '✓ 已 保 存' : '◆ 保 存 配 置'}
+        </button>
+      </div>
+
+      {saveMessage && (
+        <div
+          className="px-3 py-2 text-xs"
+          style={{
+            color: saveMessage.kind === 'error' ? 'rgba(220, 120, 120, 0.9)' : 'rgba(160, 200, 160, 0.85)',
+            background: saveMessage.kind === 'error' ? 'rgba(220, 120, 120, 0.06)' : 'rgba(120, 200, 140, 0.06)',
+            border: saveMessage.kind === 'error'
+              ? '1px solid rgba(220, 120, 120, var(--tj-edge-tint))'
+              : '1px solid rgba(120, 200, 140, var(--tj-edge-tint))',
+            clipPath: smallClip,
+          }}
+        >
+          {saveMessage.text}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ToggleField({
+  label,
+  desc,
+  checked,
+  onChange,
+}: {
+  label: string;
+  desc: string;
+  checked: boolean;
+  onChange: (checked: boolean) => void;
+}) {
+  return (
+    <div
+      className="flex items-center justify-between px-3 py-2"
+      style={{
+        background: 'rgba(var(--tj-bg-secondary), 0.45)',
+        border: '1px solid rgba(var(--tj-accent-primary), var(--tj-edge-tint-weak))',
+        clipPath: mediumClip,
+      }}
+    >
+      <div className="min-w-0 mr-3">
+        <div className="font-serif font-bold text-sm tracking-wider" style={{ color: 'rgb(var(--tj-text-primary))' }}>
+          {label}
+        </div>
+        <div className="text-xs mt-0.5" style={{ color: 'rgba(var(--tj-text-secondary), 0.65)' }}>
+          {desc}
+        </div>
+      </div>
+      <button
+        onClick={() => onChange(!checked)}
+        className="relative h-6 w-11 flex-shrink-0 transition-all"
+        style={{
+          background: checked
+            ? 'linear-gradient(135deg, rgba(var(--tj-btn-primary-start), 0.95), rgba(var(--tj-btn-primary-end), 0.86))'
+            : 'rgba(var(--tj-bg-secondary), 0.68)',
+          border: checked
+            ? '1px solid rgba(var(--tj-text-primary), var(--tj-edge))'
+            : '1px solid rgba(var(--tj-accent-primary), var(--tj-edge-tint))',
+          clipPath: smallClip,
+        }}
+      >
+        <div
+          className="absolute top-0.5 h-5 w-5 transition-transform"
+          style={{
+            left: checked ? 'calc(100% - 1.375rem)' : '0.125rem',
+            background: checked ? 'rgb(var(--tj-bg-primary))' : 'rgba(var(--tj-text-secondary), 0.78)',
+            clipPath: tinyClip,
+          }}
+        />
+      </button>
+    </div>
+  );
+}
+
+function ApiSection({
+  title,
+  description,
+  api,
+  effective,
+  modelOptions,
+  loadingModels,
+  message,
+  testResult,
+  onPatch,
+  onFetchModels,
+  onTest,
+  mainConfig,
+}: {
+  title: string;
+  description: string;
+  api: 忆庭API覆盖;
+  effective: ResolvedApi;
+  modelOptions: string[];
+  loadingModels: boolean;
+  message: { kind: 'info' | 'error'; text: string } | null;
+  testResult: ConnectionTestResult | null;
+  onPatch: (patch: Partial<忆庭API覆盖>) => void;
+  onFetchModels: () => void;
+  onTest: () => void;
+  mainConfig: { baseUrl?: string; apiKey?: string; model?: string } | null;
+}) {
+  return (
+    <Section title={title}>
+      <div
+        className="px-3 py-2 text-xs leading-relaxed"
+        style={{
+          color: 'rgba(var(--tj-text-secondary), 0.78)',
+          background: 'rgba(var(--tj-accent-primary), 0.04)',
+          border: '1px solid rgba(var(--tj-accent-primary), var(--tj-edge-tint-weak))',
+          clipPath: smallClip,
+        }}
+      >
+        {description}
+      </div>
+
+      <div className="grid gap-3 md:grid-cols-2">
+        <SelectField
+          label="供应商"
+          value={effective.provider}
+          onChange={(value) => onPatch({ provider: value as AI提供商 })}
+          options={providerOptions.map((option) => ({ value: option.value, label: option.label }))}
+        />
+        <label className="block md:col-span-2">
+          <div className="mb-1.5 font-serif text-[12px] tracking-[0.18em]" style={{ color: 'linear-gradient(135deg, rgba(var(--tj-accent-primary),0.92), rgba(var(--tj-accent-secondary),0.88))' }}>
+            模型
+          </div>
+          <div className="flex gap-2">
+            <input
+              value={api.model}
+              onChange={(e) => onPatch({ model: e.target.value })}
+              className="kaituo-input flex-1 px-2.5 py-1.5 text-sm"
+              style={{ clipPath: smallClip }}
+              placeholder="模型 ID"
+            />
+            <button
+              type="button"
+              onClick={onFetchModels}
+              className="px-3 py-1.5 text-xs font-serif tracking-wider transition-all disabled:opacity-50"
+              style={{
+                color: 'linear-gradient(135deg, rgba(var(--tj-accent-primary),0.94), rgba(var(--tj-accent-secondary),0.9))',
+                border: '1px solid rgba(var(--tj-accent-primary), var(--tj-edge-tint-strong))',
+                background: 'rgba(var(--tj-accent-primary), 0.06)',
+                clipPath: smallClip,
+              }}
+            >
+              {loadingModels ? '获取中...' : '获取模型'}
+            </button>
+          </div>
+          {modelOptions.length > 0 && (
+            <select
+              value=""
+              onChange={(e) => {
+                if (e.target.value) onPatch({ model: e.target.value });
+              }}
+              className="kaituo-input mt-2 w-full px-2.5 py-1.5 text-xs"
+              style={{ clipPath: smallClip }}
+            >
+              <option value="">— 从列表选择（{modelOptions.length}）—</option>
+              {modelOptions.map((value) => (
+                <option key={value} value={value}>
+                  {value}
+                </option>
+              ))}
+            </select>
+          )}
+        </label>
+	        <InputField label="Base URL" value={api.baseUrl} onChange={(value) => onPatch({ baseUrl: value })} placeholder={mainConfig?.baseUrl ? '留空则使用主 API：' + mainConfig.baseUrl : 'https://...'} />
+	        <InputField label="API Key" value={api.apiKey} onChange={(value) => onPatch({ apiKey: value })} type="password" placeholder={mainConfig?.apiKey ? '留空则使用主 API 的 Key' : 'sk-...'} />
+        <NumberField
+          label="最大输出"
+          value={api.maxTokens ?? 1024}
+          onChange={(value) => onPatch({ maxTokens: Math.max(1, value) })}
+          hint="留给该接口的最大输出 token。"
+        />
+        <NumberField
+          label="温度"
+          value={Math.round(((api.temperature ?? 0.2) * 100)) / 100}
+          onChange={(value) => onPatch({ temperature: value })}
+          hint="建议保持偏低，减少摘要和召回偏移。"
+          step={0.05}
+          min={0}
+          max={2}
+        />
+        <NumberField
+          label="重试"
+          value={api.retryCount}
+          onChange={(value) => onPatch({ retryCount: Math.max(0, Math.trunc(value)) })}
+          hint="获取模型和测试连接失败时自动重试的次数。"
+          step={1}
+          min={0}
+          max={5}
+        />
+      </div>
+
+      <div className="mt-3 flex flex-wrap gap-2">
+        <button
+          type="button"
+          onClick={onFetchModels}
+          className="px-3 py-1.5 text-sm font-serif tracking-wider transition-all disabled:opacity-50"
+          style={{
+            color: 'linear-gradient(135deg, rgba(var(--tj-accent-primary),0.94), rgba(var(--tj-accent-secondary),0.9))',
+            border: '1px solid rgba(var(--tj-accent-primary), var(--tj-edge-tint-strong))',
+            background: 'rgba(var(--tj-accent-primary), 0.06)',
+            clipPath: smallClip,
+          }}
+        >
+          {loadingModels ? '获取中...' : '获取模型'}
+        </button>
+        <button
+          type="button"
+          onClick={onTest}
+          className="px-3 py-1.5 text-sm font-serif tracking-wider transition-all disabled:opacity-50"
+          style={{
+            color: 'linear-gradient(135deg, rgba(var(--tj-accent-primary),0.94), rgba(var(--tj-accent-secondary),0.9))',
+            border: '1px solid rgba(var(--tj-accent-primary), var(--tj-edge-tint-strong))',
+            background: 'rgba(var(--tj-accent-primary), 0.06)',
+            clipPath: smallClip,
+          }}
+        >
+          测试连接
+        </button>
+      </div>
+
+      {modelOptions.length > 0 && (
+        <div className="mt-3 text-[11px] leading-relaxed" style={{ color: 'rgba(var(--tj-text-secondary), 0.74)' }}>
+          已获取模型：{modelOptions.slice(0, 8).join(' · ')}
+        </div>
+      )}
+
+      {message && (
+        <div
+          className="mt-3 px-3 py-2 text-xs"
+          style={{
+            color: message.kind === 'error' ? '#ffb7b7' : 'rgba(var(--tj-text-secondary), 0.95)',
+            background: message.kind === 'error' ? 'rgba(120, 30, 30, 0.35)' : 'rgba(var(--tj-accent-primary), 0.05)',
+            border: '1px solid rgba(var(--tj-accent-primary), var(--tj-edge-tint-weak))',
+            clipPath: smallClip,
+          }}
+        >
+          {message.text}
+        </div>
+      )}
+
+      {testResult && (
+        <div
+          className="mt-3 px-3 py-2 text-xs leading-relaxed"
+          style={{
+            color: testResult.ok ? 'rgba(220, 240, 220, 0.95)' : '#ffb7b7',
+            background: testResult.ok ? 'rgba(60, 120, 70, 0.28)' : 'rgba(120, 30, 30, 0.35)',
+            border: '1px solid rgba(var(--tj-accent-primary), var(--tj-edge-tint-weak))',
+            clipPath: smallClip,
+          }}
+        >
+          {testResult.detail}
+        </div>
+      )}
+    </Section>
+  );
+}
+
+function Section({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <div
+      className="px-4 py-4"
+      style={{
+        background: 'rgba(var(--tj-accent-primary), 0.035)',
+        border: '1px solid rgba(var(--tj-accent-primary), var(--tj-edge-tint))',
+        clipPath: cardClip,
+      }}
+    >
+      <div className="flex items-center gap-2">
+        <span className="h-4 w-[3px]" style={{ background: 'rgb(var(--tj-accent-primary))' }} />
+        <span className="font-serif text-[13px] font-semibold tracking-[0.28em]" style={{ color: 'rgb(var(--tj-accent-primary))' }}>
+          {title}
+        </span>
+        <span className="h-px flex-1" style={{ background: 'linear-gradient(90deg, rgba(var(--tj-accent-primary),0.35), transparent)' }} />
+      </div>
+      <div className="mt-3 space-y-3">{children}</div>
+    </div>
+  );
+}
+
+function InputField({
+  label,
+  value,
+  onChange,
+  type,
+  placeholder,
+}: {
+  label: string;
+  value: string;
+  onChange: (v: string) => void;
+  type?: string;
+  placeholder?: string;
+}) {
+  return (
+    <label className="block">
+      <div className="mb-1.5 font-serif text-[12px] tracking-[0.18em]" style={{ color: 'linear-gradient(135deg, rgba(var(--tj-accent-primary),0.92), rgba(var(--tj-accent-secondary),0.88))' }}>
+        {label}
+      </div>
+      <input
+        type={type ?? 'text'}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder={placeholder}
+        className="kaituo-input w-full px-3 py-2 text-sm font-mono"
+        style={{ clipPath: smallClip }}
+      />
+    </label>
+  );
+}
+
+function SelectField({
+  label,
+  value,
+  onChange,
+  options,
+}: {
+  label: string;
+  value: string;
+  onChange: (v: string) => void;
+  options: { value: string; label: string }[];
+}) {
+  return (
+    <label className="block">
+      <div className="mb-1.5 font-serif text-[12px] tracking-[0.18em]" style={{ color: 'linear-gradient(135deg, rgba(var(--tj-accent-primary),0.92), rgba(var(--tj-accent-secondary),0.88))' }}>
+        {label}
+      </div>
+      <select
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        className="kaituo-input w-full px-3 py-2 text-sm"
+        style={{ clipPath: smallClip }}
+      >
+        {options.map((option) => (
+          <option key={option.value} value={option.value}>
+            {option.label}
+          </option>
+        ))}
+      </select>
+    </label>
+  );
+}
+
+function NumberField({
+  label,
+  value,
+  onChange,
+  hint,
+  step = 1,
+  min = 1,
+  max,
+}: {
+  label: string;
+  value: number;
+  onChange: (v: number) => void;
+  hint: string;
+  step?: number;
+  min?: number;
+  max?: number;
+}) {
+  return (
+    <label className="block">
+      <div className="mb-1.5 font-serif text-[12px] tracking-[0.18em]" style={{ color: 'linear-gradient(135deg, rgba(var(--tj-accent-primary),0.92), rgba(var(--tj-accent-secondary),0.88))' }}>
+        {label}
+      </div>
+      <input
+        type="number"
+        min={min}
+        max={max}
+        step={step}
+        value={value}
+        onChange={(e) => onChange(Number(e.target.value) || min)}
+        className="kaituo-input w-full px-3 py-2 text-sm"
+        style={{ clipPath: smallClip }}
+      />
+      <div className="mt-1 text-[11px] leading-relaxed" style={{ color: 'rgba(var(--tj-text-secondary), 0.7)' }}>
+        {hint}
+      </div>
+    </label>
+  );
+}
+
+function TextareaField({
+  label,
+  value,
+  onChange,
+  rows,
+  hint,
+}: {
+  label: string;
+  value: string;
+  onChange: (v: string) => void;
+  rows: number;
+  hint: string;
+}) {
+  return (
+    <label className="block">
+      <div className="mb-1.5 font-serif text-[12px] tracking-[0.18em]" style={{ color: 'linear-gradient(135deg, rgba(var(--tj-accent-primary),0.92), rgba(var(--tj-accent-secondary),0.88))' }}>
+        {label}
+      </div>
+      <textarea
+        value={value}
+        rows={rows}
+        onChange={(e) => onChange(e.target.value)}
+        className="kaituo-input w-full px-3 py-2 text-sm leading-relaxed"
+        style={{ clipPath: smallClip }}
+      />
+      <div className="mt-1 text-[11px] leading-relaxed" style={{ color: 'rgba(var(--tj-text-secondary), 0.7)' }}>
+        {hint}
+      </div>
+    </label>
+  );
+}
+
+function uniqueModels(values: string[]) {
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const value of values) {
+    const trimmed = value.trim();
+    if (!trimmed || seen.has(trimmed)) continue;
+    seen.add(trimmed);
+    result.push(trimmed);
+  }
+  return result;
+}

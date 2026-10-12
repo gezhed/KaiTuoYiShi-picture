@@ -1,0 +1,58 @@
+/** 只属于 newest 指针指向的活跃叶子，生命周期见 models/leafLifecycle.ts；检查点不携带恢复上下文。 */
+export type TurnPhase = 'awaitingLanding' | 'settling';
+
+export interface TurnRecoveryContext {
+  turnAtStart: number;
+  userInput: string;
+  userMessageId: string;
+  assistantMessageId?: string;
+}
+
+const MAX_INPUT_LENGTH = 100_000;
+const MAX_ID_LENGTH = 200;
+
+/** 相位检查由调用方负责（恢复入口要求 settling，水合边界在 settling 分支内调用）。 */
+export function isSettledRecoveryCoherent(
+  recovery: TurnRecoveryContext,
+  chatHistory: readonly { role: string; id?: string; parsedResponse?: unknown }[],
+): boolean {
+  const assistantMessageId = recovery.assistantMessageId;
+  if (!assistantMessageId) return false;
+  if (!chatHistory.some((message) => message.role === 'user' && message.id === recovery.userMessageId)) return false;
+  const lastAssistant = [...chatHistory].reverse().find((message) => message.role === 'assistant');
+  if (lastAssistant?.id !== assistantMessageId) return false;
+  const parsedResponse = lastAssistant.parsedResponse;
+  return typeof parsedResponse === 'object' && parsedResponse !== null;
+}
+
+/** 容忍旧数据 / 手工改档：结构不完整时返回 issue 与 null，调用方负责记录并写回清除。 */
+export function normalizeTurnRecoveryContext(raw: unknown): {
+  value: TurnRecoveryContext | null;
+  issue?: string;
+} {
+  if (raw === null || typeof raw === 'undefined') return { value: null };
+  if (typeof raw !== 'object' || Array.isArray(raw)) {
+    return { value: null, issue: '不是合法的恢复上下文对象' };
+  }
+  const record = raw as Record<string, unknown>;
+  const turnAtStart = Math.trunc(Number(record.turnAtStart));
+  const userInput = typeof record.userInput === 'string' ? record.userInput : '';
+  const userMessageId = typeof record.userMessageId === 'string' ? record.userMessageId : '';
+  if (!Number.isFinite(turnAtStart) || turnAtStart < 1 || !userInput.trim() || !userMessageId.trim()) {
+    return { value: null, issue: '缺少回合数 / 输入文本 / 用户消息 id' };
+  }
+  const rawAssistantId = record.assistantMessageId;
+  const assistantMessageId = typeof rawAssistantId === 'string' && rawAssistantId.trim() ? rawAssistantId : undefined;
+  if (userInput.length > MAX_INPUT_LENGTH || userMessageId.length > MAX_ID_LENGTH
+    || (assistantMessageId && assistantMessageId.length > MAX_ID_LENGTH)) {
+    return { value: null, issue: '输入文本 / 消息 id 超出长度上限' };
+  }
+  return {
+    value: {
+      turnAtStart,
+      userInput,
+      userMessageId,
+      ...(assistantMessageId ? { assistantMessageId } : {}),
+    },
+  };
+}

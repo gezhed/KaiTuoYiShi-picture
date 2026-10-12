@@ -1,0 +1,140 @@
+import { useEffect, useMemo, useState } from 'react';
+import type { ApiErrorReport } from '@/hooks/useAiTools';
+import { 格式化ISO时间 } from '@/utils/format';
+import { smallClip } from '@/components/ui/clipPaths';
+
+
+interface Props {
+  /** 勿直连 services/ai。 */
+  loadApiErrorReports: () => Promise<ApiErrorReport[]>;
+  clearApiErrorReports: () => Promise<void>;
+}
+
+function formatReport(report: ApiErrorReport): string {
+  return [
+    `时间: ${格式化ISO时间(report.createdAt)}`,
+    `模块: ${report.source}`,
+    `供应商: ${report.provider || '-'}`,
+    `模型: ${report.model || '-'}`,
+    `Base URL: ${report.baseUrl || '-'}`,
+    `API Key: ${report.apiKeyHint || '-'}`,
+    `状态码: ${report.status ?? '-'}`,
+    `请求模式: ${report.requestMode || '-'}`,
+    `请求地址: ${report.requestUrl || '-'}`,
+    '',
+    '错误信息:',
+    report.message || '-',
+    report.responseText ? `\n原始响应:\n${report.responseText}` : '',
+  ].filter(Boolean).join('\n');
+}
+
+export function ApiErrorReportsTab({ loadApiErrorReports, clearApiErrorReports }: Props) {
+  const [reports, setReports] = useState<ApiErrorReport[]>([]);
+  const [selectedId, setSelectedId] = useState<string>('');
+  const [message, setMessage] = useState('');
+
+  const refresh = async () => {
+    const list = await loadApiErrorReports();
+    setReports(list);
+    setSelectedId((current) => (current && list.some((item) => item.id === current) ? current : list[0]?.id ?? ''));
+  };
+
+  useEffect(() => {
+    void (async () => {
+      await refresh();
+    })();
+  }, []);
+
+  const selected = useMemo(
+    () => reports.find((item) => item.id === selectedId) ?? reports.at(0) ?? null,
+    [reports, selectedId],
+  );
+
+  const handleClear = async () => {
+    if (!window.confirm('确定清空所有 API 错误报告吗？')) return;
+    await clearApiErrorReports();
+    setReports([]);
+    setSelectedId('');
+    setMessage('错误报告已清空。');
+  };
+
+  const handleCopy = async () => {
+    if (!selected) return;
+    await navigator.clipboard.writeText(formatReport(selected));
+    setMessage('已复制当前错误报告。');
+  };
+
+  return (
+    <div className="space-y-4">
+      <div>
+        <h2
+          className="font-serif text-xl font-bold tracking-[0.18em]"
+          style={{ color: 'rgb(var(--tj-text-primary))' }}
+        >
+          API 错误报告
+        </h2>
+        <p className="mt-2 text-sm leading-relaxed" style={{ color: 'rgba(var(--tj-text-secondary), 0.78)' }}>
+          当主剧情、连接测试或模型列表请求失败时，系统会在这里记录供应商、模型、Base URL、状态码和原始错误，方便定位真实原因。
+        </p>
+      </div>
+
+      <div className="flex flex-wrap gap-2">
+        <button onClick={() => void refresh()} className="kaituo-btn kaituo-btn-secondary px-4 py-2 text-xs">
+          刷新
+        </button>
+        <button onClick={() => void handleCopy()} disabled={!selected} className="kaituo-btn kaituo-btn-secondary px-4 py-2 text-xs disabled:opacity-50">
+          复制当前报告
+        </button>
+        <button onClick={() => void handleClear()} disabled={!reports.length} className="kaituo-btn kaituo-btn-secondary px-4 py-2 text-xs disabled:opacity-50">
+          清空报告
+        </button>
+      </div>
+
+      {message && <div className="text-xs" style={{ color: 'rgba(160, 200, 160, 0.85)' }}>{message}</div>}
+
+      {reports.length === 0 ? (
+        <div className="p-4 text-sm" style={{ color: 'rgba(var(--tj-text-secondary), 0.7)', border: '1px solid rgba(var(--tj-border), var(--tj-edge))', clipPath: smallClip }}>
+          暂无 API 错误报告。
+        </div>
+      ) : (
+        <div className="grid gap-3 lg:grid-cols-[260px_minmax(0,1fr)]">
+          <div className="max-h-[360px] space-y-2 overflow-y-auto pr-1">
+            {reports.map((report) => (
+              <button
+                key={report.id}
+                onClick={() => setSelectedId(report.id)}
+                className="w-full p-3 text-left text-xs transition-all hover:opacity-90"
+                style={{
+                  color: 'rgba(var(--tj-text-primary), 0.88)',
+                  background: report.id === selected?.id ? 'rgba(var(--tj-accent-primary), 0.12)' : 'rgba(var(--tj-bg-secondary), 0.42)',
+                  border: `1px solid ${report.id === selected?.id ? 'rgba(var(--tj-accent-primary), var(--tj-edge-tint-strong))' : 'rgba(var(--tj-border), var(--tj-edge-weak))'}`,
+                  clipPath: smallClip,
+                }}
+              >
+                <div className="truncate font-serif tracking-[0.12em]">{report.source}</div>
+                <div className="mt-1 truncate" style={{ color: 'rgba(var(--tj-text-secondary), 0.72)' }}>
+                  {report.provider || '-'} / {report.model || '-'}
+                </div>
+                <div className="mt-1" style={{ color: 'rgba(var(--tj-text-secondary), 0.58)' }}>
+                  {格式化ISO时间(report.createdAt)}
+                </div>
+              </button>
+            ))}
+          </div>
+
+          <pre
+            className="max-h-[520px] overflow-auto whitespace-pre-wrap p-4 text-xs leading-relaxed"
+            style={{
+              color: 'rgba(var(--tj-text-primary), 0.86)',
+              background: 'rgba(var(--tj-bg-secondary), 0.46)',
+              border: '1px solid rgba(var(--tj-border), var(--tj-edge-weak))',
+              clipPath: smallClip,
+            }}
+          >
+            {selected ? formatReport(selected) : ''}
+          </pre>
+        </div>
+      )}
+    </div>
+  );
+}

@@ -1,0 +1,89 @@
+import { type NewestStory记录 } from '@/models/newestStory';
+import { writeLeafNode } from '@/services/storage/saveTree';
+import { compactVariableBatchHistory } from '@/utils/longSessionRetention';
+import { stage6_memory } from './stage6_memory';
+import { stage7_worldTraveler } from './stage7_worldTraveler';
+import { stage8_variable } from './stage8_variable';
+import { stage9_npcLedger } from './stage9_npcLedger';
+import { stage9b_worldEvolution } from './stage9b_worldEvolution';
+import { stage10_storyZhiku } from './stage10_storyZhiku';
+import { stage11_backgroundJobs } from './stage11_backgroundJobs';
+import { stage12_save } from './stage12_save';
+import { requireTurnAfterReply, type TurnContext, type TurnDeltas } from './turnTypes';
+import { cleanLeafPatch } from './workflowTransaction';
+
+export async function runTurnTail(
+  ctx: TurnContext,
+  d: TurnDeltas,
+  initialNewest: NewestStory记录,
+): Promise<void> {
+  const { state, assertWorkflowActive } = ctx;
+  const headNodeId = initialNewest.headNodeId;
+  if (!headNodeId) {
+    throw new Error('runTurnTail 失败：活跃叶子指针为空。');
+  }
+
+  const reply = requireTurnAfterReply(d);
+  Object.assign(d, await stage6_memory(ctx, reply));
+  Object.assign(d, stage7_worldTraveler(ctx, reply));
+  const worldAfter = d.worldAfter as typeof state.世界;
+  const travelerAfter = d.travelerAfter as typeof state.旅人;
+
+  if (worldAfter !== ctx.worldAtStart) state.set世界(worldAfter);
+  if (travelerAfter !== ctx.travelerAtStart) state.set旅人(travelerAfter);
+
+  Object.assign(d, await stage8_variable(ctx, d));
+  Object.assign(d, stage9_npcLedger(ctx, d));
+  Object.assign(d, await stage9b_worldEvolution(ctx, d));
+  const storyWeavingBeforeAlignment = d.storyWeavingForSave;
+  Object.assign(d, await stage10_storyZhiku(ctx, d));
+  // 剧情编织每回合都可能是新的归一化克隆，无条件写会让章节摘要/剧情面板每回合整表重算。
+  if (d.storyWeavingForSave && d.storyWeavingForSave !== storyWeavingBeforeAlignment) {
+    state.set剧情编织(d.storyWeavingForSave);
+  }
+
+  {
+    const variableOverrides = d.variableOverrides;
+    const variableBatchForSave = variableOverrides?.batch;
+    const variableBatchesForSave = compactVariableBatchHistory(variableBatchForSave
+      ? [...ctx.variableBatchesAtStart, variableBatchForSave]
+      : ctx.variableBatchesAtStart);
+    assertWorkflowActive();
+    await writeLeafNode(headNodeId, cleanLeafPatch({
+      记忆: d.memoryAfterStoryProgress ?? d.mem,
+      忆庭: d.yitingWithCompression,
+      世界: variableOverrides?.世界 ?? d.worldAfter,
+      旅人: variableOverrides?.旅人 ?? d.travelerAfter,
+      新闻: variableOverrides?.新闻,
+      剧情: variableOverrides?.剧情,
+      NPC: d.npcAfterCompression,
+      variableBatches: variableBatchesForSave,
+      queueTasks: ctx.queueTasksMirror,
+    }));
+  }
+
+  Object.assign(d, await stage11_backgroundJobs(ctx, d));
+
+  assertWorkflowActive();
+  await writeLeafNode(headNodeId, cleanLeafPatch({
+    剧情编织: d.storyWeavingForSave ?? undefined,
+    智库: d.zhikuAfterRuntimeUnlock ?? undefined,
+    手机: d.phoneAfterFallbackSeed,
+    新闻: d.newsAfterGeneration ?? d.variableOverrides?.新闻,
+    记忆: d.memoryAfterStoryProgress ?? undefined,
+    忆庭: d.yitingAfterTurnRecall,
+    chatHistory: d.finalHistoryForSave,
+    相册: d.相册After,
+  }));
+
+  const memoryAfterStoryProgress = d.memoryAfterStoryProgress ?? undefined;
+  const yitingAfterTurnRecall = d.yitingAfterTurnRecall;
+  const phoneAfterFallbackSeed = d.phoneAfterFallbackSeed;
+
+  if (memoryAfterStoryProgress) state.set记忆(memoryAfterStoryProgress);
+  if (yitingAfterTurnRecall) state.set忆庭(yitingAfterTurnRecall);
+  if (phoneAfterFallbackSeed) state.set手机(phoneAfterFallbackSeed);
+  if (d.finalHistoryForSave && d.finalHistoryForSave !== state.chatHistory) state.setChatHistory(d.finalHistoryForSave);
+
+  Object.assign(d, await stage12_save(ctx, d, initialNewest));
+}

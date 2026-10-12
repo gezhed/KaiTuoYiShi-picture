@@ -1,0 +1,409 @@
+export type 变量命令动作 = 'set' | 'add' | 'sub' | 'push' | 'delete';
+
+export interface 变量命令 {
+  action: 变量命令动作;
+  /** 根路径必须是 VARIABLE_ROOT_KEYS 中的一个。 */
+  key: string;
+  value: unknown;
+}
+
+export type 变量事实类型 =
+  | 'traveler_profile'
+  | 'time'
+  | 'location'
+  | 'npc'
+  | 'item'
+  | 'world_event'
+  | 'phone_seed'
+  | 'nsfw_archive'
+  | 'weather';
+
+export interface 旅人档案变量事实 {
+  type: 'traveler_profile';
+  identity?: string;
+  appearance?: string;
+  personality?: string;
+  background?: string;
+  abilityAdd?: string[];
+  knowledgeAdd?: string[];
+  evidence?: string;
+}
+
+export interface 时间变量事实 {
+  type: 'time';
+  mode: 'no_change' | 'elapsed' | 'set_time' | 'overnight' | 'next_day';
+  minutes?: number;
+  targetTime?: string;
+  evidence?: string;
+}
+
+export interface 地点变量事实 {
+  type: 'location';
+  location: string;
+  evidence?: string;
+}
+
+export interface 天气变量事实 {
+  type: 'weather';
+  weather: string;
+  evidence?: string;
+}
+
+export interface NPC变量事实 {
+  type: 'npc';
+  id?: string;
+  name: string;
+  alias?: string;
+  tier?: 'companion' | 'extra';
+  gender?: '男' | '女' | '其他';
+  affinityDelta?: number;
+  affinitySet?: number;
+  relation?: string;
+  intimateRelationship?: boolean;
+  following?: boolean;
+  appearance?: string;
+  clothing?: string;
+  speechStyle?: string;
+  personality?: string;
+  intro?: string;
+  playerAddress?: string;
+  memory?: string;
+  recentInteraction?: string;
+  longTermImpression?: string;
+  relationshipStage?: string;
+  sharedExperiences?: string[];
+  openItems?: string[];
+  unresolvedConflicts?: string[];
+  mustRemember?: string[];
+  doNotForget?: string[];
+  evidence?: string;
+}
+
+export interface 物品变量事实 {
+  type: 'item';
+  action: 'gain';
+  category: 'food' | 'consumable' | 'lightcone' | 'weapon' | 'clothing' | 'accessory' | 'memento' | 'key';
+  name: string;
+  description?: string;
+  quantity?: number;
+  quality?: '蓝' | '紫' | '金';
+  stackable?: boolean;
+  source?: '剧情掉落' | '任务奖励' | '商店' | '打造' | '其它';
+  sourceDescription?: string;
+  narrativeEffects?: string[];
+  evidence?: string;
+}
+
+export interface 世界事件变量事实 {
+  type: 'world_event';
+  text: string;
+  evidence?: string;
+}
+
+export interface 手机来信变量事实 {
+  type: 'phone_seed';
+  targetType?: 'private' | 'group';
+  targetId?: string;
+  targetName?: string;
+  title: string;
+  context: string;
+  triggerType?: 'injury' | 'victory' | 'defeat' | 'location_change' | 'important_item' | 'relationship' | 'news' | 'quest' | 'time' | 'custom';
+  priority?: 'low' | 'normal' | 'high' | 'urgent';
+  relatedNpcIds?: string[];
+  evidence?: string;
+}
+
+export interface NSFW档案变量事实 {
+  type: 'nsfw_archive';
+  npcId?: string;
+  npcName: string;
+  enabled?: boolean;
+  ageConfirm?: 'adult' | 'unknown' | 'minor_blocked';
+  intimacyStage?: string;
+  boundaries?: string;
+  preferences?: string[];
+  sensitivePoints?: string[];
+  taboos?: string[];
+  femaleBodyArchive?: {
+    胸部?: string;
+    女性私处?: string;
+    后庭?: string;
+    体态?: string;
+    体味?: string;
+  };
+  maleBodyArchive?: {
+    男性器?: string;
+    后庭?: string;
+    体态?: string;
+    体味?: string;
+  };
+  experiences?: string[];
+  longTermFacts?: string[];
+  tags?: string[];
+  notes?: string;
+  evidence?: string;
+}
+
+export type 变量事实 =
+  | 旅人档案变量事实
+  | 时间变量事实
+  | 地点变量事实
+  | 天气变量事实
+  | NPC变量事实
+  | 物品变量事实
+  | 世界事件变量事实
+  | 手机来信变量事实
+  | NSFW档案变量事实;
+
+export interface 变量事实批次 {
+  facts: 变量事实[];
+  parseErrors: string[];
+}
+
+export interface 变量命令结果 {
+  command: 变量命令;
+  ok: boolean;
+  kind?: 'command' | 'warning' | 'error' | 'rejected';
+  reason?: string;
+  commandFingerprint?: string;
+}
+
+export type 变量批次结局 = 'completed' | 'partially_applied' | 'preflight_failed' | 'model_failed';
+
+export type 变量诊断严重性 = 'warning' | 'error';
+
+export type 变量诊断阶段 = 'parse' | 'policy' | 'commit';
+
+export interface 变量批次诊断 {
+  code: string;
+  severity: 变量诊断严重性;
+  stage: 变量诊断阶段;
+  message: string;
+  commandIndex?: number;
+  root?: string;
+}
+
+export interface 变量命令批次 {
+  id: string;
+  turn: number;
+  /** 产生这批变量结果的 assistant 消息；优先于按回合号猜测重试目标。 */
+  targetMessageId?: string;
+  timestamp: number;
+  source: 'main' | 'calibration';
+  modelName?: string;
+  results: 变量命令结果[];
+  report?: string;
+  rawText?: string;
+  /** 归约输入投影（命令落地前）的指纹；缺失 = legacy 批次，不可用于重放判定。 */
+  baseStateFingerprint?: string;
+  /** 缺失由结果派生（legacy 兼容）。 */
+  outcome?: 变量批次结局;
+  retentionSummary?: {
+    totalResults: number;
+    succeededResults: number;
+    diagnosticResults: number;
+    omittedDiagnosticResults: number;
+  };
+}
+
+export const 变量模型失败哨兵键 = '(变量模型调用失败)';
+export const 解析失败哨兵键 = '(解析失败)';
+export const 事实忽略哨兵键 = '(事实忽略)';
+
+/** 已落地 = ok 且非诊断项（warning / error / rejected）；批次结局、重放跳过、旧批次摘要与补结算判定都必须走这里。 */
+export function 是已落地命令结果(result: 变量命令结果): boolean {
+  return result.ok && (!result.kind || result.kind === 'command');
+}
+
+export function 派生变量批次结局(
+  results: readonly 变量命令结果[],
+  options?: { modelFailed?: boolean },
+): 变量批次结局 {
+  if (options?.modelFailed) return 'model_failed';
+  let applied = 0;
+  let failed = 0;
+  for (const result of results) {
+    if (是已落地命令结果(result)) applied += 1;
+    else if (!result.ok && result.kind !== 'warning') failed += 1;
+  }
+  if (failed > 0 && applied > 0) return 'partially_applied';
+  if (failed > 0) return 'preflight_failed';
+  return 'completed';
+}
+
+export function 派生变量批次诊断(results: readonly 变量命令结果[]): 变量批次诊断[] {
+  const diagnostics: 变量批次诊断[] = [];
+  results.forEach((result, index) => {
+    if (是已落地命令结果(result)) return;
+    const message = result.reason?.trim();
+    if (!message) return;
+    if (result.kind === 'warning') {
+      const isFact = result.command.key === 事实忽略哨兵键;
+      diagnostics.push({
+        code: isFact ? 'fact_ignored' : 'warning',
+        severity: 'warning',
+        stage: 'parse',
+        message,
+        commandIndex: index,
+      });
+      return;
+    }
+    if (result.kind === 'error') {
+      const code = result.command.key === 变量模型失败哨兵键
+        ? 'model_failed'
+        : result.command.key === 解析失败哨兵键
+          ? 'parse_failed'
+          : 'error';
+      diagnostics.push({ code, severity: 'error', stage: 'parse', message, commandIndex: index });
+      return;
+    }
+    if (result.kind === 'rejected') {
+      diagnostics.push({
+        code: 'policy_rejected',
+        severity: 'warning',
+        stage: 'policy',
+        message,
+        commandIndex: index,
+        root: 诊断根路径(result.command.key),
+      });
+      return;
+    }
+    diagnostics.push({
+      code: 'command_failed',
+      severity: 'error',
+      stage: 'commit',
+      message,
+      commandIndex: index,
+      root: 诊断根路径(result.command.key),
+    });
+  });
+  return diagnostics;
+}
+
+function 诊断根路径(key: string): string {
+  return key.split(/[.[]/, 1)[0];
+}
+
+const 变量命令动作集合 = new Set<变量命令动作>(['set', 'add', 'sub', 'push', 'delete']);
+const 变量批次结局集合 = new Set<变量批次结局>(['completed', 'partially_applied', 'preflight_failed', 'model_failed']);
+const 变量结果类型集合 = new Set<NonNullable<变量命令结果['kind']>>(['command', 'warning', 'error', 'rejected']);
+const SHA256_HEX = /^[0-9a-f]{64}$/;
+
+export interface 变量批次归一化结果 {
+  batches: 变量命令批次[];
+  issues: string[];
+}
+
+/** 旧批次缺 outcome 时按结果派生；缺指纹保持缺失（= legacy，不可重放判定）。结构非法项丢弃并记 issue，不静默兜底。 */
+export function 归一化变量命令批次列表(raw: unknown): 变量批次归一化结果 {
+  if (typeof raw === 'undefined' || raw === null) return { batches: [], issues: [] };
+  if (!Array.isArray(raw)) return { batches: [], issues: ['变量命令批次不是数组，已整体丢弃'] };
+  const batches: 变量命令批次[] = [];
+  const issues: string[] = [];
+  raw.forEach((item, index) => {
+    const normalized = 归一化变量命令批次(item);
+    if (normalized.batch) {
+      batches.push(normalized.batch);
+      for (const issue of normalized.issues ?? []) issues.push(`第 ${index + 1} 条批次：${issue}`);
+    } else {
+      issues.push(`第 ${index + 1} 条变量批次已丢弃：${normalized.issue}`);
+    }
+  });
+  return { batches, issues };
+}
+
+function 归一化变量命令批次(raw: unknown): { batch?: 变量命令批次; issue?: string; issues?: string[] } {
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return { issue: '不是批次对象' };
+  const record = raw as Record<string, unknown>;
+  const id = typeof record.id === 'string' && record.id.trim() ? record.id : '';
+  const turn = Math.trunc(Number(record.turn));
+  const timestamp = Math.trunc(Number(record.timestamp));
+  if (!id) return { issue: '缺少批次 id' };
+  if (!Number.isFinite(turn) || turn < 0) return { issue: '缺少合法回合数' };
+  if (!Number.isFinite(timestamp)) return { issue: '缺少合法时间戳' };
+  if (!Array.isArray(record.results)) return { issue: '缺少结果数组' };
+
+  const issues: string[] = [];
+  const results: 变量命令结果[] = [];
+  record.results.forEach((item, index) => {
+    const normalized = 归一化变量命令结果(item);
+    if (normalized.result) results.push(normalized.result);
+    else issues.push(`第 ${index + 1} 条结果已丢弃：${normalized.issue}`);
+  });
+
+  const source = record.source === 'main' || record.source === 'calibration' ? record.source : 'calibration';
+  const modelFailed = results.some((result) => result.command.key === 变量模型失败哨兵键);
+  const outcome = 变量批次结局集合.has(record.outcome as 变量批次结局)
+    ? record.outcome as 变量批次结局
+    : 派生变量批次结局(results, { modelFailed });
+  return {
+    batch: {
+      id,
+      turn,
+      timestamp,
+      source,
+      results,
+      ...(typeof record.targetMessageId === 'string' && record.targetMessageId.trim()
+        ? { targetMessageId: record.targetMessageId }
+        : {}),
+      ...(typeof record.modelName === 'string' ? { modelName: record.modelName } : {}),
+      ...(typeof record.report === 'string' ? { report: record.report } : {}),
+      ...(typeof record.rawText === 'string' ? { rawText: record.rawText } : {}),
+      ...(typeof record.baseStateFingerprint === 'string' && SHA256_HEX.test(record.baseStateFingerprint)
+        ? { baseStateFingerprint: record.baseStateFingerprint }
+        : {}),
+      outcome,
+      ...(归一化批次保留摘要(record.retentionSummary)),
+    },
+    ...(issues.length ? { issues } : {}),
+  };
+}
+
+function 归一化变量命令结果(raw: unknown): { result?: 变量命令结果; issue?: string } {
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return { issue: '不是结果对象' };
+  const record = raw as Record<string, unknown>;
+  const commandRaw = record.command;
+  const command: 变量命令 | null = typeof commandRaw === 'object' && commandRaw !== null && !Array.isArray(commandRaw)
+    ? 归一化变量命令(commandRaw as Record<string, unknown>)
+    : null;
+  if (!command) return { issue: '缺少合法命令' };
+  if (typeof record.ok !== 'boolean') return { issue: '缺少 ok 布尔值' };
+  const kind = 变量结果类型集合.has(record.kind as NonNullable<变量命令结果['kind']>)
+    ? record.kind as 变量命令结果['kind']
+    : 推断结果类型(command.key);
+  return {
+    result: {
+      command,
+      ok: record.ok,
+      ...(kind ? { kind } : {}),
+      ...(typeof record.reason === 'string' ? { reason: record.reason } : {}),
+      ...(typeof record.commandFingerprint === 'string' && SHA256_HEX.test(record.commandFingerprint)
+        ? { commandFingerprint: record.commandFingerprint }
+        : {}),
+    },
+  };
+}
+
+function 归一化变量命令(record: Record<string, unknown>): 变量命令 | null {
+  const action = record.action;
+  if (!变量命令动作集合.has(action as 变量命令动作)) return null;
+  if (typeof record.key !== 'string' || !record.key.trim()) return null;
+  return { action: action as 变量命令动作, key: record.key, value: record.value };
+}
+
+function 推断结果类型(key: string): 变量命令结果['kind'] {
+  if (key === 解析失败哨兵键 || key === 变量模型失败哨兵键) return 'error';
+  if (key === 事实忽略哨兵键) return 'warning';
+  return undefined;
+}
+
+function 归一化批次保留摘要(raw: unknown): { retentionSummary?: 变量命令批次['retentionSummary'] } {
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return {};
+  const record = raw as Record<string, unknown>;
+  const totalResults = Math.trunc(Number(record.totalResults));
+  const succeededResults = Math.trunc(Number(record.succeededResults));
+  const diagnosticResults = Math.trunc(Number(record.diagnosticResults));
+  const omittedDiagnosticResults = Math.trunc(Number(record.omittedDiagnosticResults));
+  if (![totalResults, succeededResults, diagnosticResults, omittedDiagnosticResults].every(Number.isFinite)) return {};
+  return { retentionSummary: { totalResults, succeededResults, diagnosticResults, omittedDiagnosticResults } };
+}

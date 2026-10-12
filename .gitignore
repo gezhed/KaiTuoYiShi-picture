@@ -1,0 +1,106 @@
+# Dependencies
+node_modules/
+
+# Build outputs
+dist/
+*.tsbuildinfo
+.tmp/
+.tmp-*/
+.tmp-*
+.tmp-regression/
+.tmp-story-weaving-regression/
+.wrangler/
+backups/
+
+# Local environment
+.env
+.env.*
+!.env.example
+
+# Editor and OS files
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# IDE / tool clutter
+.claude-plugin/
+.reasonix/
+.trae/
+reasonix.toml
+kaituo-star-rail-ui/
+
+# Local file-based save data (personal playthrough, never commit)
+save/
+
+# 测试/构建临时目录（跑 vitest、vite 时会把 TEMP/TMP 指到这里）
+.vt/
+.bt/
+
+# Local assistant memory / private planning notes
+.claude/
+.superpowers/
+AGENTS.md
+AGENTS-OLD.md
+AGENT_CHECKLISTS.md
+
+# docs/ 默认不发布，但**不能写成 `docs/`**：
+# 排除整个目录后 Git 根本不会进入它，后面的 `!` 放行规则一律失效（实测过）。
+# 正确写法是先放行目录、再排除目录内容，最后放行要发布的那一份。
+!docs/
+docs/*
+!docs/文生图-实机验证清单.md
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+docs/design/
+nul
+
+# Codex working files
+.codex/
+THEME_ISSUES.md
+*.bak
+
+# opencode harness working files
+.opencode/
+opencode.json
+WATCHDOG.yml
+
+# Working drafts / notes
+*草案.md
+星际和平公司角色档案完善方案.md
+记忆系统优化*.md
+本次主题重构摘要.txt
+
+# Historical agent prompts and reports stay outside the active workspace.
+/legacy_doc/
+/slice*-prompt.md
+/slice*-report*.md
+/panel_p*_plan.md
+
+# Local Claude notes
+CLAUDE.md
+
+# Agent-harness workspace debris (craft-agent / orchestration)
+.pnpm-store/
+config.json
+events.jsonl
+labels/
+statuses/
+
+# Local agents skills workspace
+.agents/
+
+# Local skills lockfile
+skills-lock.json
+
+# 临时调试脚本 / 本地生成物
+启动网页本地开发.bat
+data/builtinPresets/_gen_*.js
+scripts/_*.mjs
+scripts/build-shuangrenchenghang-preset.mjs
+scripts/sync-codex-skills.mjs

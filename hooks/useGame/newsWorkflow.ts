@@ -1,0 +1,136 @@
+import type { UseGameStateReturn } from '@/hooks/useGameState';
+import type { 聊天消息 } from '@/models/chat';
+import { callNewsModel, applyNewsGenerationResult, hasNewsGenerationChanges } from '@/services/ai/newsModel';
+import type { 新闻条目 } from '@/models/news';
+import type { 剧情编织系统 } from '@/models/storyWeaving';
+import { 世界事实文本行, type 世界事实视图 } from '@/services/storyFactConsumerView';
+import { resolveApiConfig } from '@/services/apiConfig';
+import { 归一化世界状态 } from '@/models/world';
+import { devLog, devLogError } from '@/utils/devLog';
+
+interface NewsGenerationParams {
+  state: UseGameStateReturn;
+  traveler: UseGameStateReturn['旅人'];
+  world: UseGameStateReturn['世界'];
+  news: UseGameStateReturn['新闻'];
+  npcRecords: UseGameStateReturn['NPC'];
+  plotNodes: UseGameStateReturn['剧情'];
+  storyWeaving: 剧情编织系统;
+  turnCountAtStart: number;
+  mainBody: string;
+  userInput: string;
+  recentTurns?: string[];
+  worldFactView?: 世界事实视图 | null;
+  storyWeavingSnapshot?: 剧情编织系统;
+  signal?: AbortSignal;
+  shouldCommit?: () => boolean;
+}
+
+export interface NewsGenerationStepResult {
+  news: 新闻条目[];
+  changed: boolean;
+  summary?: string;
+}
+
+export async function runNewsGenerationStep(params: NewsGenerationParams): Promise<NewsGenerationStepResult | null> {
+  const { state } = params;
+  const newsSettings = state.deviceSettings.gameSettings.新闻系统 as typeof state.deviceSettings.gameSettings.新闻系统 | undefined;
+  if (!newsSettings?.enabled || !newsSettings.autoGenerate) return null;
+
+  const config = resolveApiConfig(state.deviceSettings.apiSettings, state.deviceSettings.gameSettings, 'news');
+  if (!config) return null;
+
+  try {
+    const requestStartedAt = Date.now();
+    devLog('net', 'runNewsGenerationStep.request', {
+      model: config.model,
+      mode: 'generation',
+      turn: params.turnCountAtStart + 1,
+    });
+    const result = await callNewsModel({
+      config,
+      turnCount: params.turnCountAtStart + 1,
+      userInput: params.userInput,
+      body: params.mainBody,
+      recentTurns: params.recentTurns,
+      worldFacts: params.worldFactView ? 世界事实文本行(params.worldFactView) : undefined,
+      traveler: params.traveler,
+      world: 归一化世界状态(params.world),
+      news: params.news,
+      npcRecords: params.npcRecords,
+      plotNodes: params.plotNodes,
+      storyWeaving: params.storyWeavingSnapshot ?? params.storyWeaving,
+      maxNewEntriesPerTurn: newsSettings.maxNewEntriesPerTurn,
+      promptModules: state.deviceSettings.gameSettings.promptModules,
+      signal: params.signal,
+      retryCount: newsSettings.api.retryCount ?? 2,
+    });
+    devLog('net', 'runNewsGenerationStep.response', {
+      durationMs: Date.now() - requestStartedAt,
+      ok: true,
+    });
+
+    if (params.signal?.aborted || params.shouldCommit?.() === false) return null;
+    const nextNews = applyNewsGenerationResult(params.news, result.parsed);
+    const changed = hasNewsGenerationChanges(result.parsed) && !areNewsListsEquivalent(params.news, nextNews);
+    return {
+      news: nextNews,
+      changed,
+      summary: result.parsed.说明,
+    };
+  } catch (err) {
+    if ((err as Error).name !== 'AbortError') {
+      devLogError('net', 'runNewsGenerationStep.catch', err, {
+        source: 'news-model',
+        message: '生成失败',
+        turn: params.turnCountAtStart + 1,
+      });
+    }
+    return null;
+  }
+}
+
+function areNewsListsEquivalent(left: 新闻条目[], right: 新闻条目[]): boolean {
+  if (left.length !== right.length) return false;
+  return left.every((item, index) => areNewsEntriesEquivalent(item, right[index]));
+}
+
+function areNewsEntriesEquivalent(left: 新闻条目, right: 新闻条目 | undefined): boolean {
+  if (!right) return false;
+  return (
+    left.id === right.id &&
+    left.类目 === right.类目 &&
+    left.状态 === right.状态 &&
+    left.回合 === right.回合 &&
+    left.标题 === right.标题 &&
+    left.正文 === right.正文 &&
+    left.重要 === right.重要 &&
+    left.关联剧情系列ID === right.关联剧情系列ID &&
+    left.关联剧情分段ID === right.关联剧情分段ID &&
+    JSON.stringify(left.组织标签 ?? []) === JSON.stringify(right.组织标签 ?? []) &&
+    JSON.stringify(left.关联系统 ?? []) === JSON.stringify(right.关联系统 ?? [])
+  );
+}
+
+export function buildRecentTurnWindowForNews(history: 聊天消息[], currentUserInput: string, currentBody: string, interval: number): string[] {
+  const windowSize = Math.max(5, Math.min(10, Math.trunc(interval) || 5));
+  const pairs: string[] = [];
+  let pendingUser = '';
+
+  for (const msg of history) {
+    if (msg.role === 'user') {
+      pendingUser = msg.content;
+      continue;
+    }
+    if (msg.role === 'assistant') {
+      const body = msg.parsedResponse?.body || msg.content;
+      if (pendingUser || body) {
+        pairs.push(`- 玩家：${pendingUser || '（无）'}\n  正文：${body.slice(0, 420)}`);
+      }
+      pendingUser = '';
+    }
+  }
+
+  pairs.push(`- 玩家：${currentUserInput || '（无）'}\n  正文：${currentBody.slice(0, 420)}`);
+  return pairs.slice(-windowSize);
+}

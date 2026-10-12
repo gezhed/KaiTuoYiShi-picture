@@ -1,0 +1,115 @@
+import type { API配置项 } from '@/models/settings';
+import { 归一化参与者名单, type 世界事件实例 } from '@/models/storyWeaving';
+import { chatCompletionNonStream } from '@/services/ai/chatCompletionClient';
+import { extractJsonLikeText, parseJsonWithRepair } from '@/services/ai/structuredOutputRepair';
+import type { 世界演变候选 } from '@/services/worldEvolutionAdjudicator';
+import { devLogError } from '@/utils/devLog';
+
+export interface 世界演变步骤输入 {
+  config: API配置项 | null;
+  events: 世界事件实例[];
+  dueInstanceIds: string[];
+  clues: string[];
+  当前游戏日: number;
+  signal?: AbortSignal;
+}
+
+export type 世界演变步骤结果 =
+  | { ok: true; skipped: true; candidates: [] }
+  | { ok: true; skipped: false; candidates: 世界演变候选[] }
+  | { ok: false; failureReason: string };
+
+export function buildWorldEvolutionPrompt(input: {
+  当前游戏日: number;
+  dueEvents: 世界事件实例[];
+  futureEvents?: 世界事件实例[];
+  clues: string[];
+}): string {
+  const due = input.dueEvents.map((event) => `- ${event.eventInstanceId}｜${event.标题 || '(未命名)'}｜第 ${event.dueAt} 日到期`);
+  const future = (input.futureEvents ?? []).map((event) => `- ${event.eventInstanceId}｜${event.标题 || '(未命名)'}｜第 ${event.dueAt} 日到期（未到期）`);
+  const clues = input.clues.map((clue) => `- ${clue}`);
+  return [
+    '你是世界演变引擎：根据到期事件与动态世界线索，给出事件的结算候选。只输出 JSON 数组，不输出其他内容。',
+    `【当前游戏日】第 ${input.当前游戏日} 日`,
+    '【到期事件】',
+    ...due,
+    future.length ? '【已排期未到期事件（只有线索/正文已提前解决才处理，否则不要输出）】' : '',
+    ...future,
+    clues.length ? '【动态世界线索】' : '',
+    ...clues,
+    '【输出格式】每项一个候选：',
+    '{"eventInstanceId":"事件 ID","action":"resolve|reschedule|ignore","outcome":"一句话结果","dueAt":8,"facts":[{"factType":"world_event","payload":{},"playerKnown":true,"participants":["相关NPC姓名，可空"]}]}',
+    '规则：只处理列出的事件 ID；resolve=已解决（对未到期事件表示提前解决，必须写 outcome），reschedule=延期（可给 dueAt 目标游戏日），ignore=错过；',
+    'facts 为该事件产生的结构化事实，playerKnown=true 表示玩家可直接感知（会进入全局事件展示），participants 写事件直接涉及的 NPC 姓名（没有不写）。',
+  ].filter(Boolean).join('\n');
+}
+
+export function parseWorldEvolutionResponse(raw: string): 世界演变候选[] | null {
+  if (!raw) return null;
+  try {
+    const parsed = parseJsonWithRepair(extractJsonLikeText(raw, 'any'), 'any');
+    const list = Array.isArray(parsed) ? parsed : (parsed as { candidates?: unknown }).candidates;
+    if (!Array.isArray(list)) return null;
+    const candidates: 世界演变候选[] = [];
+    for (const item of list) {
+      if (!item || typeof item !== 'object' || Array.isArray(item)) return null;
+      const rawItem = item as Record<string, unknown>;
+      if (typeof rawItem.eventInstanceId !== 'string' || !rawItem.eventInstanceId.trim()) return null;
+      if (rawItem.action !== 'resolve' && rawItem.action !== 'reschedule' && rawItem.action !== 'ignore') return null;
+      const facts = Array.isArray(rawItem.facts)
+        ? rawItem.facts
+          .filter((fact): fact is Record<string, unknown> => Boolean(fact && typeof fact === 'object' && typeof (fact as { factType?: unknown }).factType === 'string'))
+          .map((fact) => ({
+            factType: fact.factType as string,
+            payload: fact.payload && typeof fact.payload === 'object' ? fact.payload as Record<string, unknown> : {},
+            playerKnown: fact.playerKnown === true,
+            participants: 归一化参与者名单(fact.participants),
+          }))
+        : undefined;
+      candidates.push({
+        eventInstanceId: rawItem.eventInstanceId.trim(),
+        action: rawItem.action,
+        dueAt: typeof rawItem.dueAt === 'number' && Number.isFinite(rawItem.dueAt) ? Math.trunc(rawItem.dueAt) : undefined,
+        outcome: typeof rawItem.outcome === 'string' ? rawItem.outcome.trim() : undefined,
+        facts,
+        note: typeof rawItem.note === 'string' ? rawItem.note.trim() : undefined,
+      });
+    }
+    return candidates;
+  } catch {
+    return null;
+  }
+}
+
+export async function runWorldEvolutionStep(params: 世界演变步骤输入): Promise<世界演变步骤结果> {
+  const dueIds = new Set(params.dueInstanceIds);
+  const dueEvents = params.events.filter((event) => dueIds.has(event.eventInstanceId));
+  const futureEvents = params.events.filter(
+    (event) => event.status === 'scheduled' && !dueIds.has(event.eventInstanceId),
+  );
+  const clues = params.clues.filter((clue) => typeof clue === 'string' && clue.trim()).slice(0, 8);
+  if (dueEvents.length === 0 && clues.length === 0) {
+    return { ok: true, skipped: true, candidates: [] };
+  }
+  if (!params.config) {
+    return { ok: false, failureReason: '世界演变 API 未配置，正式世界保持不变，到期事件保持待结算。' };
+  }
+  const prompt = buildWorldEvolutionPrompt({ 当前游戏日: params.当前游戏日, dueEvents, futureEvents, clues });
+  try {
+    const raw = await chatCompletionNonStream(params.config, {
+      systemPrompt: '你是世界演变引擎，只输出 JSON，不输出其他内容。',
+      messages: [{ role: 'user', content: prompt }],
+      maxTokens: params.config.maxTokens ?? 2048,
+      temperature: 0.2,
+      signal: params.signal,
+    });
+    const candidates = parseWorldEvolutionResponse(raw);
+    if (!candidates) {
+      return { ok: false, failureReason: '世界演变 API 返回无法解析的候选 JSON，整体拒绝，正式世界保持不变。' };
+    }
+    return { ok: true, skipped: false, candidates };
+  } catch (error) {
+    devLogError('stage', 'world_evolution.failed', error);
+    return { ok: false, failureReason: '世界演变调用失败，正式世界保持不变，到期事件保持待结算。' };
+  }
+}

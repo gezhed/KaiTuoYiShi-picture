@@ -1,0 +1,342 @@
+{
+  "meta": {
+    "purpose": "Hand-authored Noul (boolean) probes for TypeSafe Jev, modeled on the judgment slots in this repo's pipeline.",
+    "endpoint": "POST https://api.typesafe.ai/v1/systemone",
+    "headers": { "Authorization": "Bearer <API_KEY>", "Content-Type": "application/json" },
+    "model": "jev-latest",
+    "how_to_read": "ground_truth is the correct answer for THIS fixture, which is hand-written, so the answer is known by construction. It is not a prediction of the number Jev returns. Compare answers.<id>.noul against it to set thresholds on your own data.",
+    "instruction_language": "instructions and criteria are English on purpose: the docs state English is the primary training language and CJK is accepted but scores lower. The state stays Chinese — that is the content.",
+    "state_key_mapping": "State keys here are English (segment.key_events) so the instructions stay English. Map from the repo's Chinese fields: 关键事件 -> key_events, 本段结束状态 -> end_states, 标题 -> title, 正文 -> prose.",
+    "same_turn_note": "All four requests judge the SAME turn, so each carries the same prose and the same `turn` object. That is deliberate: they can be merged into a single call — one state, all 23 questions — which is the intended System One usage, since questions run in parallel and in isolation and extra questions barely change response time. They are split here so each can be tried and debugged alone.",
+    "discrimination_note": "23 Noul statements across 4 requests; 12 of the 23 ground truths are FALSE. The prose stops one step short of its first end state, so a judge that rubber-stamps lights up the FALSE rows immediately."
+  },
+  "requests": [
+    {
+      "name": "segment_advance",
+      "replaces": "services/storyAdvanceJudge.ts judgeStoryAdvance -> { completed, actualSegmentId }",
+      "body": {
+        "state": {
+          "segment": {
+            "id": "seg-07",
+            "title": "旧城断电",
+            "key_events": ["查明停电原因", "与守夜人达成交易", "拿到配电房钥匙"],
+            "end_states": ["配电房恢复供电", "守夜人成为同行者"]
+          },
+          "turn": {
+            "index": 41,
+            "prose": "旧城的灯是在我们走到第三条巷子的时候灭的。\n\n不是一盏一盏暗下去，是整个街区同时咽了气。头顶的电线发出最后一声细响，像谁把一根钢丝绷断了。黑暗从墙根往上爬，三秒之内，屋檐、招牌、晾衣绳全部沉进去，只剩下雨还在响。\n\n老陈蹲在变压器下面，手电筒咬在嘴里，光从下往上照出一片红褐色的锈。他用改锥敲了敲外壳，声音是空的。\n\n“不是雷。”他把手电吐出来，连带吐出一口雨水，“保险烧了，可保险不会自己烧。有人先掐了总闸，再让它过载——这样谁来看，都只会说是打雷。”\n\n我问他总闸在哪。他朝北边抬了抬下巴。那里立着一栋比两边矮半层的房子，窗子里透出一点光，不是电的光。\n\n“配电房。守着它的人不姓陈，姓周。”\n\n周守拙坐在配电房门口的竹椅上，膝盖上盖着一条褪色的军毯。他没有问我为什么来，也没有问老陈为什么跟在我后面。他只是把手里那盏马灯举高了一点，照了照我的脸，又照了照老陈的。\n\n“灯是你停的。”他说。不是问句。\n\n老陈没接话。我把手伸进雨里，摊开，让他看清我手上的茧——那是接线时被铜丝割出来的，一道一道，还没结痂。\n\n周守拙看了很久。然后他弯下腰，从竹椅底下拖出一个铁皮盒，盒盖上一层水。里面是十几把钥匙，用麻绳串着，每一把都挂着一小块木牌，木牌上的字被摸得发亮。\n\n他解下最下面那一把，木牌上写着一个“配”字。\n\n“总闸我拉下来之后，一直没敢推回去。”他把钥匙放进我掌心，掌心的温度比雨还冷，“我不知道上面那位要断多久。你们要是推上去了，他就知道有人来过。”\n\n“我知道。”我说。\n\n“你不知道。”他说，“推上去，灯亮三分钟，然后整条街的电压都会追着你走。你这双手，到时候就不只是割破了。”\n\n我把钥匙收进兜里。\n\n他站了起来，把军毯从膝盖上拿开，抖了抖，搭在肩上。\n\n“我跟你去。”他说，“守着它十年，我总得看一眼它亮起来的样子。”\n\n老陈在后面咳了一声。我没回头。\n\n配电房的铁门在我面前，锁孔是黑的。雨顺着门框往下淌，在门槛上积成一道薄薄的水线。我把钥匙举起来，对准那个孔。",
+            "player_input": "去配电房看看"
+          },
+          "candidates": [
+            {
+              "id": "seg-08",
+              "title": "夜巡",
+              "key_events": ["夜巡路上遇袭", "认出袭击者的徽记"]
+            },
+            {
+              "id": "seg-09",
+              "title": "灯塔",
+              "key_events": ["登塔点灯", "与灯塔守望者对峙"]
+            }
+          ]
+        },
+        "model": "jev-latest",
+        "questions": {
+          "key_event_0_occurred": {
+            "type": "noul",
+            "instructions": "Has the key event `segment.key_events[0]` already happened in `turn.prose`?",
+            "criteria": {
+              "true": "The prose shows this event happening, or one described action unambiguously covers it.",
+              "false": "The prose has not reached this event, or mentions it only as a plan, promise, prediction, or possibility."
+            }
+          },
+          "key_event_1_occurred": {
+            "type": "noul",
+            "instructions": "Has the key event `segment.key_events[1]` already happened in `turn.prose`?",
+            "criteria": {
+              "true": "The prose shows this event happening, or one described action unambiguously covers it.",
+              "false": "The prose has not reached this event, or mentions it only as a plan, promise, prediction, or possibility."
+            }
+          },
+          "key_event_2_occurred": {
+            "type": "noul",
+            "instructions": "Has the key event `segment.key_events[2]` already happened in `turn.prose`?",
+            "criteria": {
+              "true": "The prose shows this event happening, or one described action unambiguously covers it.",
+              "false": "The prose has not reached this event, or mentions it only as a plan, promise, prediction, or possibility."
+            }
+          },
+          "end_state_0_met": {
+            "type": "noul",
+            "instructions": "Is the end state `segment.end_states[0]` true at the end of `turn.prose`?",
+            "criteria": {
+              "true": "The final situation described matches this end state, not necessarily word-for-word.",
+              "false": "This state does not hold at the end of the prose, or the prose only moves toward it."
+            }
+          },
+          "end_state_1_met": {
+            "type": "noul",
+            "instructions": "Is the end state `segment.end_states[1]` true at the end of `turn.prose`?",
+            "criteria": {
+              "true": "The final situation described matches this end state, not necessarily word-for-word.",
+              "false": "This state does not hold at the end of the prose, or the prose only moves toward it."
+            }
+          },
+          "prose_is_present_tense": {
+            "type": "noul",
+            "instructions": "Does `turn.prose` narrate events that have already happened in the fiction, rather than describing plans, intentions, promises, or open questions about the future?",
+            "criteria": {
+              "true": "The prose reports completed or ongoing action and events.",
+              "false": "The prose is mainly a plan, an intention, a promise, a question, an out-of-character note, or a preview of what may happen."
+            }
+          },
+          "reached_seg_08": {
+            "type": "noul",
+            "instructions": "Does `turn.prose` already contain the characters, location, or events belonging to the later segment `candidates[0]`, rather than to `segment`?",
+            "criteria": {
+              "true": "The prose has moved into the later segment's material — its people, place, or events are what the turn is actually about.",
+              "false": "The prose is still within the current segment, or only glances at the later segment's material."
+            }
+          },
+          "reached_seg_09": {
+            "type": "noul",
+            "instructions": "Does `turn.prose` already contain the characters, location, or events belonging to the later segment `candidates[1]`, rather than to `segment`?",
+            "criteria": {
+              "true": "The prose has moved into the later segment's material — its people, place, or events are what the turn is actually about.",
+              "false": "The prose is still within the current segment, or only glances at the later segment's material."
+            }
+          }
+        }
+      },
+      "ground_truth": {
+        "key_event_0_occurred": true,
+        "key_event_1_occurred": true,
+        "key_event_2_occurred": true,
+        "end_state_0_met": false,
+        "end_state_1_met": true,
+        "prose_is_present_tense": true,
+        "reached_seg_08": false,
+        "reached_seg_09": false,
+        "why": "All three key events land: 老陈 names the cause (有人先掐了总闸), 周守拙 trades the key for being taken along, 我把钥匙收进兜里. But the prose stops with the key raised at a locked door — 配电房恢复供电 has NOT happened, so completed must be false. 夜巡 and 灯塔 have not started.",
+        "composed": "completed = AND(key_event_*) AND AND(end_state_*) AND prose_is_present_tense = false. actualSegmentId = last of [seg-08, seg-09] passing threshold = undefined."
+      }
+    },
+    {
+      "name": "npc_archiving",
+      "replaces": "data/variableWorldbook.ts section 3 — the five admission criteria in one prose rule",
+      "body": {
+        "state": {
+          "source_work": {
+            "title": "<your source work>",
+            "known_characters": ["老陈"]
+          },
+          "scene": { "current": "旧城北区·配电房门口" },
+          "turn": {
+            "index": 41,
+            "prose": "旧城的灯是在我们走到第三条巷子的时候灭的。\n\n不是一盏一盏暗下去，是整个街区同时咽了气。头顶的电线发出最后一声细响，像谁把一根钢丝绷断了。黑暗从墙根往上爬，三秒之内，屋檐、招牌、晾衣绳全部沉进去，只剩下雨还在响。\n\n老陈蹲在变压器下面，手电筒咬在嘴里，光从下往上照出一片红褐色的锈。他用改锥敲了敲外壳，声音是空的。\n\n“不是雷。”他把手电吐出来，连带吐出一口雨水，“保险烧了，可保险不会自己烧。有人先掐了总闸，再让它过载——这样谁来看，都只会说是打雷。”\n\n我问他总闸在哪。他朝北边抬了抬下巴。那里立着一栋比两边矮半层的房子，窗子里透出一点光，不是电的光。\n\n“配电房。守着它的人不姓陈，姓周。”\n\n周守拙坐在配电房门口的竹椅上，膝盖上盖着一条褪色的军毯。他没有问我为什么来，也没有问老陈为什么跟在我后面。他只是把手里那盏马灯举高了一点，照了照我的脸，又照了照老陈的。\n\n“灯是你停的。”他说。不是问句。\n\n老陈没接话。我把手伸进雨里，摊开，让他看清我手上的茧——那是接线时被铜丝割出来的，一道一道，还没结痂。\n\n周守拙看了很久。然后他弯下腰，从竹椅底下拖出一个铁皮盒，盒盖上一层水。里面是十几把钥匙，用麻绳串着，每一把都挂着一小块木牌，木牌上的字被摸得发亮。\n\n他解下最下面那一把，木牌上写着一个“配”字。\n\n“总闸我拉下来之后，一直没敢推回去。”他把钥匙放进我掌心，掌心的温度比雨还冷，“我不知道上面那位要断多久。你们要是推上去了，他就知道有人来过。”\n\n“我知道。”我说。\n\n“你不知道。”他说，“推上去，灯亮三分钟，然后整条街的电压都会追着你走。你这双手，到时候就不只是割破了。”\n\n我把钥匙收进兜里。\n\n他站了起来，把军毯从膝盖上拿开，抖了抖，搭在肩上。\n\n“我跟你去。”他说，“守着它十年，我总得看一眼它亮起来的样子。”\n\n老陈在后面咳了一声。我没回头。\n\n配电房的铁门在我面前，锁孔是黑的。雨顺着门框往下淌，在门槛上积成一道薄薄的水线。我把钥匙举起来，对准那个孔。"
+          },
+          "npc": {
+            "name": "周守拙",
+            "history": []
+          }
+        },
+        "model": "jev-latest",
+        "questions": {
+          "is_canonical_character": {
+            "type": "noul",
+            "instructions": "Does `npc.name` appear in `source_work.known_characters`, rather than being a figure invented for this scene?",
+            "criteria": {
+              "true": "The name belongs to an established character of the source work.",
+              "false": "The name is not in the source work's character list — it is an unnamed extra, an invented bystander, or an anonymous role."
+            }
+          },
+          "is_named_in_scene": {
+            "type": "noul",
+            "instructions": "Is `npc` referred to by a personal name or a stable recurring title in `turn.prose`, rather than by a description?",
+            "criteria": {
+              "true": "The prose gives a name or a title that identifies one specific person across scenes.",
+              "false": "The prose only describes the person by appearance, role, or a generic noun."
+            }
+          },
+          "is_traveling_companion": {
+            "type": "noul",
+            "instructions": "Does `turn.prose` show `npc` traveling with the player or committed to traveling with them?",
+            "criteria": {
+              "true": "The prose puts them on the road together, or the NPC has agreed to accompany the player.",
+              "false": "The NPC stays at their own location, or the question of traveling together is unresolved."
+            }
+          },
+          "is_mission_critical": {
+            "type": "noul",
+            "instructions": "Is `npc` required for an objective that is still open at the end of `turn.prose`?",
+            "criteria": {
+              "true": "An open task needs this specific person to give information, grant access, or act.",
+              "false": "No open objective depends on this person."
+            }
+          },
+          "will_reappear": {
+            "type": "noul",
+            "instructions": "Does `turn.prose` leave `npc` in a position where the player is likely to meet them again?",
+            "criteria": {
+              "true": "The prose keeps them nearby, leaves an obligation, a promise, a next meeting, or an unfinished exchange.",
+              "false": "The prose sends them away for good, or they exist only inside this one scene."
+            }
+          },
+          "has_prior_interaction": {
+            "type": "noul",
+            "instructions": "Has the player interacted with `npc` before `turn.index`, beyond one passing exchange?",
+            "criteria": {
+              "true": "`npc.history` records more than a single brief exchange, or a relationship that has changed.",
+              "false": "The record is empty, or shows only one incidental contact."
+            }
+          }
+        }
+      },
+      "ground_truth": {
+        "is_canonical_character": false,
+        "is_named_in_scene": true,
+        "is_traveling_companion": true,
+        "is_mission_critical": true,
+        "will_reappear": true,
+        "has_prior_interaction": false,
+        "why": "周守拙 is invented for this scene (not in source_work.known_characters) but carries a stable personal name, commits to traveling with the player (“我跟你去”), and is still needed: the open objective is throwing the 总闸 back, and he is the only one who knows where it is and what happens when it is thrown (“我不知道上面那位要断多久”). history is empty — first contact.",
+        "composed": "入档 = OR(all six) = true, fired by three independent criteria. Note the two FALSE rows: a judge reading only 'a notable NPC is present' gets is_canonical_character and has_prior_interaction wrong."
+      }
+    },
+    {
+      "name": "value_change_support",
+      "replaces": "the unread baseStateFingerprint replay gate — records that a change happened, never whether the prose supports it",
+      "note": "Three changes are graded at once, chosen to cover every reachable branch: unsupported-but-silent, supported, and contradicted.",
+      "body": {
+        "state": {
+          "changes": [
+            { "path": "variables.旧城.断电时长", "before": 0, "after": 72 },
+            { "path": "variables.周守拙.信任度", "before": 40, "after": 75 },
+            { "path": "variables.旧城.供电状态", "before": "断电", "after": "恢复" }
+          ],
+          "turn": {
+            "index": 41,
+            "prose": "旧城的灯是在我们走到第三条巷子的时候灭的。\n\n不是一盏一盏暗下去，是整个街区同时咽了气。头顶的电线发出最后一声细响，像谁把一根钢丝绷断了。黑暗从墙根往上爬，三秒之内，屋檐、招牌、晾衣绳全部沉进去，只剩下雨还在响。\n\n老陈蹲在变压器下面，手电筒咬在嘴里，光从下往上照出一片红褐色的锈。他用改锥敲了敲外壳，声音是空的。\n\n“不是雷。”他把手电吐出来，连带吐出一口雨水，“保险烧了，可保险不会自己烧。有人先掐了总闸，再让它过载——这样谁来看，都只会说是打雷。”\n\n我问他总闸在哪。他朝北边抬了抬下巴。那里立着一栋比两边矮半层的房子，窗子里透出一点光，不是电的光。\n\n“配电房。守着它的人不姓陈，姓周。”\n\n周守拙坐在配电房门口的竹椅上，膝盖上盖着一条褪色的军毯。他没有问我为什么来，也没有问老陈为什么跟在我后面。他只是把手里那盏马灯举高了一点，照了照我的脸，又照了照老陈的。\n\n“灯是你停的。”他说。不是问句。\n\n老陈没接话。我把手伸进雨里，摊开，让他看清我手上的茧——那是接线时被铜丝割出来的，一道一道，还没结痂。\n\n周守拙看了很久。然后他弯下腰，从竹椅底下拖出一个铁皮盒，盒盖上一层水。里面是十几把钥匙，用麻绳串着，每一把都挂着一小块木牌，木牌上的字被摸得发亮。\n\n他解下最下面那一把，木牌上写着一个“配”字。\n\n“总闸我拉下来之后，一直没敢推回去。”他把钥匙放进我掌心，掌心的温度比雨还冷，“我不知道上面那位要断多久。你们要是推上去了，他就知道有人来过。”\n\n“我知道。”我说。\n\n“你不知道。”他说，“推上去，灯亮三分钟，然后整条街的电压都会追着你走。你这双手，到时候就不只是割破了。”\n\n我把钥匙收进兜里。\n\n他站了起来，把军毯从膝盖上拿开，抖了抖，搭在肩上。\n\n“我跟你去。”他说，“守着它十年，我总得看一眼它亮起来的样子。”\n\n老陈在后面咳了一声。我没回头。\n\n配电房的铁门在我面前，锁孔是黑的。雨顺着门框往下淌，在门槛上积成一道薄薄的水线。我把钥匙举起来，对准那个孔。"
+          }
+        },
+        "model": "jev-latest",
+        "questions": {
+          "change_0_supported": {
+            "type": "noul",
+            "instructions": "Does `turn.prose` show the event that justifies changing `changes[0].path` from `changes[0].before` to `changes[0].after`?",
+            "criteria": {
+              "true": "The prose describes the specific action or event that produces this change.",
+              "false": "The prose only implies, foreshadows, or omits the cause; or `changes[0].after` restates `changes[0].before` with no event between them."
+            }
+          },
+          "change_0_contradicted": {
+            "type": "noul",
+            "instructions": "Does `turn.prose` state the opposite of `changes[0].after` for `changes[0].path`?",
+            "criteria": {
+              "true": "The prose establishes a value for this field that conflicts with the proposed new value.",
+              "false": "The prose is silent on this field, or is consistent with the proposed value."
+            }
+          },
+          "change_1_supported": {
+            "type": "noul",
+            "instructions": "Does `turn.prose` show the event that justifies changing `changes[1].path` from `changes[1].before` to `changes[1].after`?",
+            "criteria": {
+              "true": "The prose describes the specific action or event that produces this change.",
+              "false": "The prose only implies, foreshadows, or omits the cause; or `changes[1].after` restates `changes[1].before` with no event between them."
+            }
+          },
+          "change_1_contradicted": {
+            "type": "noul",
+            "instructions": "Does `turn.prose` state the opposite of `changes[1].after` for `changes[1].path`?",
+            "criteria": {
+              "true": "The prose establishes a value for this field that conflicts with the proposed new value.",
+              "false": "The prose is silent on this field, or is consistent with the proposed value."
+            }
+          },
+          "change_2_supported": {
+            "type": "noul",
+            "instructions": "Does `turn.prose` show the event that justifies changing `changes[2].path` from `changes[2].before` to `changes[2].after`?",
+            "criteria": {
+              "true": "The prose describes the specific action or event that produces this change.",
+              "false": "The prose only implies, foreshadows, or omits the cause; or `changes[2].after` restates `changes[2].before` with no event between them."
+            }
+          },
+          "change_2_contradicted": {
+            "type": "noul",
+            "instructions": "Does `turn.prose` state the opposite of `changes[2].after` for `changes[2].path`?",
+            "criteria": {
+              "true": "The prose establishes a value for this field that conflicts with the proposed new value.",
+              "false": "The prose is silent on this field, or is consistent with the proposed value."
+            }
+          }
+        }
+      },
+      "ground_truth": {
+        "change_0_supported": false,
+        "change_0_contradicted": false,
+        "change_1_supported": true,
+        "change_1_contradicted": false,
+        "change_2_supported": false,
+        "change_2_contradicted": true,
+        "why": "change_0 is the silent middle case: the prose establishes that the outage length is UNKNOWN (“我不知道上面那位要断多久”), so writing 72 supports nothing and contradicts nothing — the trap is that a judge seeing 断电 may claim support from the outage itself. change_1 is genuinely earned: 周守拙 hands over the key and commits to coming along. change_2 is contradicted: the prose ends with the power still off and the door still locked, so 恢复 states the opposite of what the prose establishes.",
+        "composed": "supported=false,contradicted=false -> retry or drop. supported=false,contradicted=true -> reject outright. supported=true -> apply. This three-way split is exactly what the fingerprint gate cannot make: it sees that a change was applied, not that the prose earned it."
+      }
+    },
+    {
+      "name": "gates",
+      "replaces": "hooks/useGame/memoryUtils.ts noise regex; stage7_worldTraveler.ts:44 substring match on 升阶/突破/确认; models/region.ts hold",
+      "body": {
+        "state": {
+          "turn": {
+            "index": 41,
+            "assistant_text": "旧城的灯是在我们走到第三条巷子的时候灭的。\n\n不是一盏一盏暗下去，是整个街区同时咽了气。头顶的电线发出最后一声细响，像谁把一根钢丝绷断了。黑暗从墙根往上爬，三秒之内，屋檐、招牌、晾衣绳全部沉进去，只剩下雨还在响。\n\n老陈蹲在变压器下面，手电筒咬在嘴里，光从下往上照出一片红褐色的锈。他用改锥敲了敲外壳，声音是空的。\n\n“不是雷。”他把手电吐出来，连带吐出一口雨水，“保险烧了，可保险不会自己烧。有人先掐了总闸，再让它过载——这样谁来看，都只会说是打雷。”\n\n我问他总闸在哪。他朝北边抬了抬下巴。那里立着一栋比两边矮半层的房子，窗子里透出一点光，不是电的光。\n\n“配电房。守着它的人不姓陈，姓周。”\n\n周守拙坐在配电房门口的竹椅上，膝盖上盖着一条褪色的军毯。他没有问我为什么来，也没有问老陈为什么跟在我后面。他只是把手里那盏马灯举高了一点，照了照我的脸，又照了照老陈的。\n\n“灯是你停的。”他说。不是问句。\n\n老陈没接话。我把手伸进雨里，摊开，让他看清我手上的茧——那是接线时被铜丝割出来的，一道一道，还没结痂。\n\n周守拙看了很久。然后他弯下腰，从竹椅底下拖出一个铁皮盒，盒盖上一层水。里面是十几把钥匙，用麻绳串着，每一把都挂着一小块木牌，木牌上的字被摸得发亮。\n\n他解下最下面那一把，木牌上写着一个“配”字。\n\n“总闸我拉下来之后，一直没敢推回去。”他把钥匙放进我掌心，掌心的温度比雨还冷，“我不知道上面那位要断多久。你们要是推上去了，他就知道有人来过。”\n\n“我知道。”我说。\n\n“你不知道。”他说，“推上去，灯亮三分钟，然后整条街的电压都会追着你走。你这双手，到时候就不只是割破了。”\n\n我把钥匙收进兜里。\n\n他站了起来，把军毯从膝盖上拿开，抖了抖，搭在肩上。\n\n“我跟你去。”他说，“守着它十年，我总得看一眼它亮起来的样子。”\n\n老陈在后面咳了一声。我没回头。\n\n配电房的铁门在我面前，锁孔是黑的。雨顺着门框往下淌，在门槛上积成一道薄薄的水线。我把钥匙举起来，对准那个孔。"
+          },
+          "traveler": {
+            "final_answer": "我确认不了。等我先推开那扇门，看见灯亮起来，再说。"
+          },
+          "path": { "name": "巡灯人" },
+          "region": {
+            "boundary": "旧城北区，北以配电房为界，不出城垣。",
+            "hold": ["旧城入夜后无照明", "配电房由周姓守夜人独自看管"]
+          },
+          "scene": { "current": "旧城北区·配电房门口" }
+        },
+        "model": "jev-latest",
+        "questions": {
+          "turn_is_out_of_character": {
+            "type": "noul",
+            "instructions": "Is `turn.assistant_text` an out-of-character note — a system instruction, a format reminder, a correction, or a meta comment — rather than story prose?",
+            "criteria": {
+              "true": "The text addresses the user or the system, or talks about the reply itself, instead of narrating the fiction.",
+              "false": "The text narrates the fiction, even if it also contains dialogue or a section heading."
+            }
+          },
+          "traveler_affirms_advancement": {
+            "type": "noul",
+            "instructions": "Does `traveler.final_answer` affirm that the traveler will advance along `path.name`?",
+            "criteria": {
+              "true": "The answer commits to continuing on this path, in the traveler's own words, with no condition that defers the decision.",
+              "false": "The answer declines, hesitates, defers, asks a question instead of deciding, or commits to a different path."
+            }
+          },
+          "scene_contradicts_region": {
+            "type": "noul",
+            "instructions": "Does `turn.assistant_text` place the traveler somewhere `region.boundary` says they cannot be, or treat a fact in `region.hold` as false?",
+            "criteria": {
+              "true": "The prose contradicts the region's stated boundary or one of the facts it holds.",
+              "false": "The prose is consistent with the region, or the region says nothing about this."
+            }
+          }
+        }
+      },
+      "ground_truth": {
+        "turn_is_out_of_character": false,
+        "traveler_affirms_advancement": false,
+        "scene_contradicts_region": false,
+        "why": "The first is pure narration, no meta text anywhere in it. The second is the adversarial probe: `traveler.final_answer` CONTAINS the substring 确认, which stage7_worldTraveler.ts:44 currently reads as 升阶 — but the answer is a refusal to decide, so the truthful answer is false. The third: the prose stays inside the north district, keeps everyone at the 配电房 door, and treats both held facts as true.",
+        "composed": "affirms=false -> do not apply 应用狭间结果. The substring matcher gets this one backwards; that is the whole point of including it.",
+        "variant": "Flip `region.boundary` to '旧城北区，不得进入配电房内部' and re-run — scene_contradicts_region should flip to true while the other two stay put."
+      }
+    }
+  ]
+}

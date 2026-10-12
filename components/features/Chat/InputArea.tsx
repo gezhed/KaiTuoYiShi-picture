@@ -1,0 +1,337 @@
+﻿import { useState, useRef, useCallback, useMemo, memo, useEffect } from 'react';
+import { Dices, ListRestart, Radio, RadioOff } from 'lucide-react';
+import { isTurnStatusActive, isTurnStatusCancellable, TURN_STATUS_IDLE, type TurnStatus } from '@/hooks/useGame/turnStatus';
+import { IconButton } from '@/components/ui/IconButton';
+import { cardClip as btnClip, mediumClip as iconClip } from '@/components/ui/clipPaths';
+
+interface InputAreaProps {
+  onSend: (text: string) => void;
+  onAbort: () => void;
+  loading: boolean;
+  disabled?: boolean;
+  canRestartOpening?: boolean;
+  canReroll?: boolean;
+  rerollDisabledReason?: string;
+  onRestartOpening?: () => void;
+  onReroll?: () => string | undefined | Promise<string | undefined>;
+  streamingEnabled?: boolean;
+  onToggleStreaming?: () => void;
+  turnStatus?: TurnStatus;
+  onCancelWorkflow?: () => void;
+  actionOptions?: string[];
+  /** id 变化才应用一次。 */
+  draft?: { id: string; text: string } | null;
+  onParseActionOptions?: (text: string) => string[];
+}
+
+
+
+function isMobileTextInput() {
+  if (typeof window === 'undefined' || typeof navigator === 'undefined') return false;
+
+  const mobileNavigator = navigator as Navigator & {
+    userAgentData?: { mobile?: boolean };
+  };
+  if (mobileNavigator.userAgentData?.mobile === true) return true;
+
+  return window.matchMedia('(hover: none) and (pointer: coarse)').matches;
+}
+
+export const InputArea = memo(function InputArea({
+  onSend,
+  onAbort,
+  loading,
+  disabled,
+  canRestartOpening = false,
+  canReroll = false,
+  rerollDisabledReason,
+  onRestartOpening,
+  onReroll,
+  streamingEnabled = true,
+  onToggleStreaming,
+  turnStatus = TURN_STATUS_IDLE,
+  onCancelWorkflow,
+  actionOptions = [],
+  draft,
+  onParseActionOptions,
+}: InputAreaProps) {
+  const [input, setInput] = useState('');
+  const [rerollActionOptions, setRerollActionOptions] = useState<string[]>([]);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
+  const isComposingRef = useRef(false);
+  const lastSubmittedRef = useRef('');
+  const appliedDraftRef = useRef('');
+  const visibleActionOptions = useMemo(() => {
+    const source = actionOptions.length > 0 ? actionOptions : rerollActionOptions;
+    return onParseActionOptions?.(source.join('\n')) ?? [];
+  }, [actionOptions, rerollActionOptions, onParseActionOptions]);
+
+  useEffect(() => {
+    if (!draft || appliedDraftRef.current === draft.id) return;
+    appliedDraftRef.current = draft.id;
+    if (!input.trim()) {
+      requestAnimationFrame(() => {
+        setInput(draft.text);
+        lastSubmittedRef.current = draft.text;
+        inputRef.current?.focus();
+      });
+    }
+  }, [input, draft]);
+
+  const handleSend = useCallback(() => {
+    const trimmed = input.trim();
+    if (!trimmed || loading) return;
+    lastSubmittedRef.current = trimmed;
+    onSend(trimmed);
+    setInput('');
+    setRerollActionOptions([]);
+    inputRef.current?.focus();
+  }, [input, loading, onSend]);
+
+  const handleAbortClick = useCallback(() => {
+    onAbort();
+    if (lastSubmittedRef.current) {
+      setInput(lastSubmittedRef.current);
+      requestAnimationFrame(() => inputRef.current?.focus());
+    }
+  }, [onAbort]);
+
+  const appendActionOptionToInput = useCallback((current: string, option: string) => {
+    const normalizedCurrent = current.trim();
+    const normalizedOption = option.trim();
+    if (!normalizedOption) return normalizedCurrent;
+    if (!normalizedCurrent) return normalizedOption;
+    if (/[，,、；;。！？!?\s]$/.test(normalizedCurrent)) {
+      return `${normalizedCurrent} ${normalizedOption}`.trim();
+    }
+    return `${normalizedCurrent}；${normalizedOption}`;
+  }, []);
+
+  const handlePickOption = useCallback((text: string) => {
+    setInput((current) => appendActionOptionToInput(current, text));
+    inputRef.current?.focus();
+  }, [appendActionOptionToInput]);
+
+  const showOptions = !loading && !disabled && visibleActionOptions.length > 0;
+
+  const handleRerollClick = useCallback(async () => {
+    setRerollActionOptions(actionOptions);
+    const restoredInput = await onReroll?.();
+    if (typeof restoredInput === 'string') {
+      setInput(restoredInput);
+      requestAnimationFrame(() => inputRef.current?.focus());
+    }
+  }, [actionOptions, onReroll]);
+
+  const handleKeyDown = useCallback(
+    (e: React.KeyboardEvent) => {
+      if (e.key !== 'Enter' || e.shiftKey) return;
+      if (isComposingRef.current || e.nativeEvent.isComposing) return;
+      if (isMobileTextInput()) return;
+
+      e.preventDefault();
+      handleSend();
+    },
+    [handleSend],
+  );
+
+  return (
+    <div
+      className="shrink-0 p-2.5 pb-[calc(var(--app-safe-bottom)+74px)] md:p-3 md:pb-3"
+      style={{
+        borderTop: '1px solid rgba(var(--tj-border), 0.72)',
+        background: 'rgba(var(--tj-surface), 0.72)',
+        boxShadow: '0 -8px 22px rgba(var(--tj-shadow), 0.05)',
+      }}
+    >
+      {turnStatus.kind !== 'idle' && (
+        <div
+          className="mb-1.5 flex items-center justify-between gap-3 px-3 py-1.5 font-serif text-[11px] tracking-[0.18em]"
+          style={{
+            color: 'rgba(var(--tj-text-primary), 0.9)',
+            background: 'rgba(var(--tj-accent-primary), 0.06)',
+            border: '1px solid rgba(var(--tj-accent-primary), var(--tj-edge-tint))',
+            clipPath: iconClip,
+          }}
+        >
+          <span className="min-w-0 truncate">{turnStatus.text}</span>
+          <span className="flex shrink-0 items-center gap-2">
+          {turnStatus.kind === 'failed' && (
+            <span style={{ color: 'rgba(255,180,180,0.9)' }}>
+              失败 {turnStatus.failCount} 次
+            </span>
+          )}
+          {turnStatus.kind === 'failed' ? (
+            <span
+              className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full font-serif text-[12px] font-bold"
+              style={{
+                color: 'rgb(var(--tj-ui-active-text))',
+                background: 'linear-gradient(135deg, rgba(var(--tj-danger),0.95), rgba(var(--tj-danger),0.9))',
+                boxShadow: '0 0 10px rgba(var(--tj-danger),0.38), inset 0 0 0 1px rgba(var(--tj-danger),0.55)',
+              }}
+            >
+              !
+            </span>
+          ) : isTurnStatusActive(turnStatus) ? (
+            <span className="inline-flex items-center gap-1.5 shrink-0">
+              <span
+                className="h-1.5 w-1.5 animate-pulse-soft rounded-full"
+                style={{ background: 'rgb(var(--tj-accent-primary))', boxShadow: '0 0 8px rgba(var(--tj-accent-primary), 0.75)' }}
+              />
+              <span
+                className="h-1.5 w-1.5 animate-pulse-soft rounded-full"
+                style={{ background: 'rgb(var(--tj-accent-primary))', animationDelay: '0.14s', boxShadow: '0 0 8px rgba(var(--tj-accent-primary), 0.55)' }}
+              />
+              <span
+                className="h-1.5 w-1.5 animate-pulse-soft rounded-full"
+                style={{ background: 'rgb(var(--tj-accent-primary))', animationDelay: '0.28s', boxShadow: '0 0 8px rgba(var(--tj-accent-primary), 0.35)' }}
+              />
+            </span>
+          ) : (
+            <span
+              className="flex h-5 w-5 shrink-0 items-center justify-center font-serif text-[11px]"
+              style={{ color: 'rgba(var(--tj-text-secondary), 0.8)' }}
+              title={turnStatus.kind === 'stopped' ? '已停止' : ''}
+            >
+              ∥
+            </span>
+          )}
+          {isTurnStatusCancellable(turnStatus) && onCancelWorkflow && (
+            <button
+              type="button"
+              onClick={onCancelWorkflow}
+              className="px-2 py-0.5 text-[10px] tracking-[0.16em]"
+              style={{
+                color: 'rgba(var(--tj-text-primary),0.92)',
+                background: 'rgba(var(--tj-panel-bg-start),0.2)',
+                border: '1px solid rgba(var(--tj-accent-secondary), var(--tj-edge-tint))',
+                clipPath: iconClip,
+              }}
+            >
+              取消
+            </button>
+          )}
+          </span>
+        </div>
+      )}
+
+      <div className="mb-1.5 flex items-center gap-1.5">
+        {canRestartOpening && (
+          <IconButton
+            icon={ListRestart}
+            label="重新开局"
+            description="回到初始开局并清除当前进度"
+            disabled={loading || disabled}
+            onClick={() => onRestartOpening?.()}
+          />
+        )}
+        <IconButton
+          icon={Dices}
+          label="重写上一回复"
+          description="回滚上一回合并重新生成回复"
+          disabledReason={!canReroll ? (rerollDisabledReason ?? '需要先完成一条回复') : undefined}
+          disabled={!canReroll || loading || disabled}
+          onClick={() => void handleRerollClick()}
+        />
+        <IconButton
+          icon={streamingEnabled ? Radio : RadioOff}
+          label={streamingEnabled ? '流式显示已开启' : '流式显示已关闭'}
+          description={streamingEnabled ? '回复生成时逐步显示正文' : '回复完成后一次显示正文'}
+          active={streamingEnabled}
+          disabled={loading}
+          pressed={streamingEnabled}
+          onClick={() => onToggleStreaming?.()}
+        />
+      </div>
+
+      {showOptions && (
+        <div
+          className="mb-2 flex gap-1.5 overflow-x-auto kaituo-options-scroll"
+          style={{ scrollbarWidth: 'thin' }}
+        >
+          {visibleActionOptions.slice(0, 6).map((opt, idx) => (
+            <button
+              key={`${idx}-${opt}`}
+              type="button"
+              onClick={() => handlePickOption(opt)}
+              title="点击加入输入框，可继续微调"
+              className="group relative px-3 py-1.5 text-xs leading-tight transition-all hover:bg-[rgba(var(--tj-accent-primary),0.16)] whitespace-nowrap shrink-0"
+              style={{
+                color: 'rgba(var(--tj-accent-primary), 0.92)',
+                background: 'rgba(var(--tj-accent-primary), 0.06)',
+                border: '1px solid rgba(var(--tj-accent-primary), var(--tj-edge-tint-strong))',
+                clipPath: iconClip,
+              }}
+            >
+              <span className="mr-1 opacity-60">▸</span>
+              {opt}
+            </button>
+          ))}
+        </div>
+      )}
+
+      <div className="flex items-stretch gap-2">
+        <textarea
+          ref={inputRef}
+          value={input}
+          onChange={(e) => setInput(e.target.value)}
+          onKeyDown={handleKeyDown}
+          onCompositionStart={() => {
+            isComposingRef.current = true;
+          }}
+          onCompositionEnd={() => {
+            isComposingRef.current = false;
+          }}
+          placeholder={loading ? '正在回应……' : '说点什么，或者描述你的动作...'}
+          disabled={loading || disabled}
+          rows={1}
+          className="kaituo-input max-h-24 min-h-[40px] flex-1 resize-none px-3 py-2 text-sm disabled:opacity-50 md:min-h-0 md:px-3.5 md:py-2.5"
+          style={{
+            clipPath: btnClip,
+          }}
+        />
+        {loading ? (
+          <button
+            onClick={handleAbortClick}
+            className="flex min-w-[58px] items-center justify-center gap-2 px-3 font-serif text-xs font-medium tracking-[0.14em] transition-all hover:opacity-90 md:min-w-[64px] md:px-5 md:text-sm md:tracking-[0.3em]"
+            style={{
+              background: 'linear-gradient(135deg, rgba(var(--tj-danger),0.9), rgba(var(--tj-danger),0.9))',
+              color: 'rgb(var(--tj-on-accent))',
+              clipPath: btnClip,
+              border: '1px solid rgba(var(--tj-danger), var(--tj-edge-tint-strong))',
+            }}
+          >
+            <span className="inline-flex items-center gap-1">
+              {[0, 1, 2].map((i) => (
+                <span
+                  key={i}
+                  className="h-1.5 w-1.5 animate-pulse-soft rounded-full bg-white/90"
+                  style={{ animationDelay: `${i * 0.16}s` }}
+                />
+              ))}
+            </span>
+            停止
+          </button>
+        ) : (
+          <button
+            onClick={handleSend}
+            disabled={!input.trim() || disabled}
+            className="kaituo-btn kaituo-btn-primary group min-w-[58px] px-3 text-xs md:min-w-[64px] md:px-6 md:text-sm"
+          >
+            <span
+              className="absolute inset-0 -translate-x-full group-hover:translate-x-full transition-transform duration-700 ease-out pointer-events-none"
+              style={{ background: 'linear-gradient(90deg, transparent, rgba(var(--tj-text-primary), 0.45), transparent)' }}
+            />
+            <span className="relative">发送</span>
+          </button>
+        )}
+      </div>
+      <div
+        className="mt-1.5 hidden text-right text-xs tracking-wider md:block"
+        style={{ color: 'rgba(var(--tj-text-secondary), 0.55)' }}
+      >
+        Enter 发送 · Shift+Enter 换行
+      </div>
+    </div>
+  );
+});

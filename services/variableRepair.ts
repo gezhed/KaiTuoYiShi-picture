@@ -1,0 +1,94 @@
+import type { 聊天消息 } from '@/models/chat';
+import type { NPC记录 } from '@/models/npc';
+import type { API配置项 } from '@/models/settings';
+import type { 提示词模块 } from '@/models/prompts';
+import type { 变量命令批次 } from '@/models/variableCommand';
+import type { VariableState } from '@/utils/variableRegistry';
+import { callVariableModel } from '@/services/ai/variableModel';
+import { parseVariableCommands } from '@/utils/variableExecutor';
+import { factsToVariableCommands, parseVariableFacts } from '@/utils/variableFacts';
+import { applyNsfwVariablePolicy } from '@/utils/variableNsfwPolicy';
+import { listAppliedFingerprintsForTurn } from '@/utils/variableFingerprint';
+import {
+  分类修复命令,
+  构建变量修复计划,
+  type 变量修复计划,
+  type 变量修复项,
+} from '@/models/variableRepair';
+
+export interface 变量重解析参数 {
+  message: 聊天消息;
+  turn: number;
+  stateSnapshot: VariableState;
+  /** 提交前据此判过期；由调用方决定取哪个时点的指纹，本函数不自己算。 */
+  baseStateFingerprint: string;
+  batches: readonly 变量命令批次[];
+  mainApiConfig: API配置项;
+  userInput: string;
+  nsfwEnabled: boolean;
+  maleNsfwArchiveEnabled: boolean;
+  retryCount?: number;
+  promptModules?: 提示词模块[];
+  signal?: AbortSignal;
+}
+
+export async function 重新解析变量计划(params: 变量重解析参数): Promise<变量修复计划> {
+  const body = params.message.parsedResponse?.body.trim() || params.message.content.trim();
+  if (!body) throw new Error('该回合正文为空，无法重新解析变量。');
+  if (params.message.role !== 'assistant') throw new Error('只有助手回合可以重新解析变量。');
+
+  const { rawText } = await callVariableModel(params.mainApiConfig, {
+    body,
+    variableDraft: params.message.parsedResponse?.variableDraft,
+    userInput: params.userInput,
+    turnCount: params.turn,
+    state: params.stateSnapshot,
+    nsfwEnabled: params.nsfwEnabled,
+    maleNsfwArchiveEnabled: params.maleNsfwArchiveEnabled,
+    nsfwBaselineCandidates: [],
+    signal: params.signal,
+    retryCount: params.retryCount,
+    promptModules: params.promptModules,
+  });
+  if (params.signal?.aborted) throw new DOMException('Aborted', 'AbortError');
+
+  const parsedFacts = parseVariableFacts(rawText);
+  // 修复不生成新手机种子：避免重解析引入与历史回合无关的新事实。
+  const factCommands = factsToVariableCommands(parsedFacts.facts, params.stateSnapshot, params.turn, {
+    phoneSeedsEnabled: false,
+    maxPhoneSeedsPerTurn: 0,
+  });
+  const parsedLegacy = parseVariableCommands(rawText);
+  const commands = [...factCommands.commands, ...parsedLegacy.commands];
+
+  const { allowedCommands, rejectedCommands } = applyNsfwVariablePolicy(commands, {
+    nsfwEnabled: params.nsfwEnabled,
+    maleNsfwArchiveEnabled: params.maleNsfwArchiveEnabled,
+  }, (params.stateSnapshot.NPC ?? []) as NPC记录[]);
+
+  const appliedFingerprints = listAppliedFingerprintsForTurn(
+    params.batches,
+    params.turn,
+    params.message.id,
+  );
+  const classified = await 分类修复命令({
+    commands: allowedCommands,
+    state: params.stateSnapshot,
+    appliedFingerprints,
+  });
+  const rejectedItems: 变量修复项[] = rejectedCommands.map((item, index) => ({
+    id: `rejected_${index}`,
+    category: 'unsupported',
+    commands: [item.command],
+    reason: item.reason,
+    nsfwRejected: true,
+  }));
+
+  return 构建变量修复计划({
+    turn: params.turn,
+    targetMessageId: params.message.id,
+    baseStateFingerprint: params.baseStateFingerprint,
+    modelName: params.mainApiConfig.model,
+    items: [...classified, ...rejectedItems],
+  });
+}

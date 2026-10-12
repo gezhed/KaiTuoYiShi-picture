@@ -1,0 +1,102 @@
+﻿// 踏入必须经 App 的 actions.handleSend('[系统] 踏入命途狭间') 发出，不能在组件内 setWorld 后再由外部 handleSend：
+// React 异步 setState 会让 handleSend 闭包里读到的还是旧的 state.世界，scope 切不到 pathAwakening，prompt 走错。
+
+import type { 世界状态 } from '@/models/world';
+import { 拒绝命途狭间 } from '@/services/pathService';
+import { getPath } from '@/data/journeyPresets';
+import { PATH_CORE_BELIEFS } from '@/models/path';
+import { cardClip as btnClip, panelClip as cardClip } from '@/components/ui/clipPaths';
+
+interface Props {
+  world: 世界状态;
+  setWorld: React.Dispatch<React.SetStateAction<世界状态>>;
+  onTrigger: () => void;
+  disabled?: boolean;
+}
+
+
+
+export function PathAwakeningInvitation({ world, setWorld, onTrigger, disabled }: Props) {
+  if (!world.待触发狭间) return null;
+  const pathId = world.待触发狭间;
+  const def = getPath(pathId);
+  const belief = PATH_CORE_BELIEFS[pathId];
+  if (!def) return null;
+
+  const handleEnter = () => {
+    if (disabled) return;
+    onTrigger();
+  };
+  const handleDecline = () => {
+    setWorld((prev) => 拒绝命途狭间(prev));
+  };
+
+  return (
+    <div
+      className="mx-3 mb-2 p-4"
+      style={{
+        background:
+          'linear-gradient(135deg, rgba(var(--tj-accent-primary), 0.08) 0%, rgba(140, 100, 60, 0.10) 100%)',
+        border: '1px solid rgba(var(--tj-accent-primary), var(--tj-edge-tint-strong))',
+        clipPath: cardClip,
+      }}
+    >
+      <div
+        className="mb-2 text-xs tracking-[0.4em]"
+        style={{ color: 'rgba(var(--tj-accent-primary), 0.7)' }}
+      >
+        命 途 狭 间 之 引
+      </div>
+      <div
+        className="mb-1 text-base font-serif"
+        style={{ color: 'rgba(var(--tj-text-primary),0.95)' }}
+      >
+        「{def.name}」的意志正注视着你
+      </div>
+      <div
+        className="mb-3 text-sm leading-relaxed"
+        style={{ color: 'rgba(var(--tj-text-primary),0.85)' }}
+      >
+        {belief.核心}
+      </div>
+      <div
+        className="mb-3 text-xs leading-relaxed"
+        style={{ color: 'rgba(var(--tj-text-secondary),0.75)' }}
+      >
+        踏入后,下一回合不推进主剧情,而是进入命途狭间——你将在虚境中接受三道诘问,
+        命途意志会据此评判是否让你跨入下一阶。可以选择暂缓,但满载的进度会一直等到你回头。
+      </div>
+      <div className="flex gap-2">
+        <button
+          type="button"
+          onClick={handleEnter}
+          disabled={disabled}
+          className="flex-1 px-4 py-2 text-sm font-serif tracking-[0.3em] transition-all hover:opacity-90 disabled:opacity-40"
+          style={{
+            background:
+              'linear-gradient(135deg, rgba(var(--tj-accent-primary), 0.85), rgba(200, 160, 80, 0.85))',
+            color: 'rgb(var(--tj-ui-active-text))',
+            clipPath: btnClip,
+            border: '1px solid rgba(var(--tj-accent-primary), var(--tj-edge-tint-strong))',
+          }}
+        >
+          踏 入
+        </button>
+        <button
+          type="button"
+          onClick={handleDecline}
+          disabled={disabled}
+          className="px-4 py-2 text-sm tracking-[0.2em] transition-all hover:opacity-90 disabled:opacity-40"
+          style={{
+            background: 'rgba(var(--tj-panel-bg-end),0.6)',
+            color: 'rgba(var(--tj-text-secondary),0.85)',
+            clipPath: btnClip,
+            border: '1px solid rgba(var(--tj-text-secondary), var(--tj-edge-tint-strong))',
+          }}
+        >
+          暂 缓
+        </button>
+      </div>
+    </div>
+  );
+}
