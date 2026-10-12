@@ -16,11 +16,12 @@ type SamplingFieldNames = {
 };
 
 export function applySamplingParams(
-  target: Record<string, unknown>,
+  params: Record<string, unknown>,
   names: SamplingFieldNames,
   request: ChatCompletionRequest,
   config: API配置项,
 ): void {
+  const target = params;
   const topP = request.topP ?? config.topP;
   if (names.topP && typeof topP === 'number') target[names.topP] = topP;
   const topK = request.topK ?? config.topK;

@@ -21,7 +21,7 @@ export async function chatCompletion(
     maxTokens: request.maxTokens ?? config.maxTokens,
     onSummary: request.onDeepSeekRecovery,
     execute: async (attemptConfig, attemptOptions) => {
-      let reported = false;
+      const reportState = { reported: false };
       let finishReason: string | undefined;
       let diagnostics: DeepSeekAttemptDiagnostics = {
         sawReasoning: false,
@@ -29,7 +29,7 @@ export async function chatCompletion(
         selectedModel: attemptConfig.model,
       };
       const reportDiagnostics = (next: DeepSeekAttemptDiagnostics): void => {
-        reported = true;
+        reportState.reported = true;
         diagnostics = next;
       };
       const messages = attemptOptions.appendRecoveryInstruction
@@ -48,7 +48,7 @@ export async function chatCompletion(
         onError: callbacks.onError,
         onFinishReason: (reason) => { finishReason = reason; },
       });
-      if (!reported) {
+      if (!reportState.reported) {
         diagnostics = {
           sawReasoning: false,
           sawVisibleContent: text.trim().length > 0,
@@ -113,7 +113,7 @@ export async function chatCompletionNonStream(
     maxTokens: request.maxTokens ?? config.maxTokens,
     onSummary: request.onDeepSeekRecovery,
     execute: async (attemptConfig, attemptOptions) => {
-      let reported = false;
+      const reportState = { reported: false };
       let diagnostics: DeepSeekAttemptDiagnostics = {
         sawReasoning: false,
         sawVisibleContent: false,
@@ -128,11 +128,11 @@ export async function chatCompletionNonStream(
         maxTokens: attemptOptions.maxTokens,
         deepSeekRecovery: 'disabled',
         onResponseDiagnostics: (next) => {
-          reported = true;
+          reportState.reported = true;
           diagnostics = next;
         },
       });
-      if (!reported) {
+      if (!reportState.reported) {
         diagnostics = {
           sawReasoning: false,
           sawVisibleContent: text.trim().length > 0,
