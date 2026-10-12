@@ -122,7 +122,7 @@ export function PromptPreviewPanel({
       ) : (
         <提示条
           kind="info"
-          text="没有命中任何角色。写成 $角色名-sfw-upperbody$（只上半身）或 $角色名-nsfw-lowerbody$（只下半身）才会触发角色替换；名字要与角色卡的「中文名/英文名/别名」之一匹配。要限定取景请在提示词里写构图词（upper body / lower body / cowboy shot），或在 JSON 形式里加 framing。"
+          text="没有命中任何角色。写成 $角色名-sfw-upperbody$（只上半身）或 $角色名-nsfw-lowerbody$（只下半身）才会触发角色替换；名字要与角色卡的「中文名/英文名/别名」之一匹配。JSON 形式两种包法都认：$…$ 与 ${…}（AI 写预设常用后者）。要限定取景请在提示词里写构图词（upper body / lower body / cowboy shot），或在 JSON 里加 framing。"
         />
       )}
 

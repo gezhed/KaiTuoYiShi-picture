@@ -10,6 +10,7 @@ import {
   归一化触发文本,
   命中启用角色,
   取别名列表,
+  提取出场角色,
   type 角色匹配上下文,
 } from '@/services/ai/imageGen/characterPrompt';
 import type { 角色卡 } from '@/models/genSystem';
@@ -292,6 +293,60 @@ describe('处理角色提示词', () => {
     expect(处理角色提示词('$战斗服-upperbody$', 上下文2).提示词).toBe('battle top');
     expect(处理角色提示词('$战斗服-lowerbody$', 上下文2).提示词).toBe('battle skirt');
     expect(处理角色提示词('$战斗服-upperbody-lowerbody$', 上下文2).提示词).toBe('battle top, battle skirt');
+  });
+
+  it('认 AI 常写的 `${json}` 形式（没有收尾 $）', () => {
+    const 输入 = '${"name":"流萤","angle":"from front","upperBody":"sfw","lowerBody":"sfw"}';
+    expect(处理角色提示词(输入, 上下文).提示词).toBe('silver hair, white coat, white skirt');
+  });
+
+  it('`${甲}$,${乙}` 两段都要替换（曾经只有第一段生效）', () => {
+    const 带服装 = 建角色({
+      nameCN: '三月七',
+      nameEN: 'March 7th',
+      characterTraits: 'pink hair',
+      upperBodySFW: 'white shirt',
+      fullBodySFW: 'blue skirt',
+      outfits: [{
+        id: 'o1', name: 'youthful adventurer style blue and pink casual skirt set',
+        上半身: 'blue and pink jacket', 下半身: 'casual skirt', 全身: '', 负面: '',
+      }],
+    });
+    const 上下文2 = 建上下文([带服装]);
+    // 用户实际遇到的那串：第一段是角色、第二段是服装，逗号相连。
+    const 输入 = '${"name":"March 7th","angle":"from front","upperBody":"sfw","lowerBody":"sfw"}$,'
+      + '${"name":"youthful adventurer style blue and pink casual skirt set","upperBody":"visible","lowerBody":"visible"}';
+    expect(处理角色提示词(输入, 上下文2).提示词)
+      .toBe('pink hair, white shirt, blue skirt,blue and pink jacket, casual skirt');
+  });
+
+  it('混写 `${…}$` 与孤立的 `$` 都不会吃掉后面的文本', () => {
+    const 输入 = '前缀, ${"name":"流萤","angle":"","upperBody":"sfw"}$, 后缀 $单独一个';
+    const 结果 = 处理角色提示词(输入, 上下文).提示词;
+    expect(结果).toContain('silver hair, white coat');
+    expect(结果).toContain('后缀');
+    expect(结果).toContain('单独一个');
+  });
+
+  it('括号没闭合时原样保留，不吞掉后面内容', () => {
+    const 输入 = '${"name":"流萤","angle":"","upperBody":"sfw" 后面还有正文';
+    expect(处理角色提示词(输入, 上下文).提示词).toContain('后面还有正文');
+  });
+
+  it('AI 写歪的 JSON 也能认：尾逗号 / 中文引号 / 全角冒号', () => {
+    for (const 段 of [
+      '{"name":"流萤","angle":"","upperBody":"sfw",}',
+      '{“name”：“流萤”，“angle”：“”，“upperBody”：“sfw”}',
+    ]) {
+      expect(处理角色提示词(`$${段}$`, 上下文).提示词, 段).toBe('silver hair, white coat');
+    }
+  });
+
+  it('提取出场角色同样认 `${json}`（NovelAI 分角色载荷要用）', () => {
+    const 出场 = 提取出场角色('${"name":"流萤","angle":"","upperBody":"sfw"}', 上下文);
+    expect(出场).toHaveLength(1);
+    // 这个上下文里的中文名带别名（`流萤|萨姆`），拿到整串是对的。
+    expect(出场[0].角色.nameCN).toContain('流萤');
   });
 
   it('JSON 形式带 angle 时识别为角色而非服装', () => {

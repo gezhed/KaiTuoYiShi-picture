@@ -148,14 +148,131 @@ interface 解析段 {
   framing?: string;
 }
 
-/** 解析 `$…$` 段：先 JSON，再旧版后缀。返回 null 表示无法识别。 */
+/**
+ * 遍历提示词里的角色 / 服装段，两种写法都认：
+ *
+ *   ① `$…$`：本应用与上游的写法 —— `$名字-sfw-upperbody$`、`${json}$`；
+ *   ② `${json}`：**AI 常写**的写法，整段就是一个 JSON 对象、没有收尾 `$`。
+ *
+ * 为什么必须把第二种显式认下来：按 `$…$` 去配对时，`${甲}$,${乙}` 里第一个 `$`
+ * 会与第二段的开头 `$` 配成一对，于是**甲被替换、乙原样留下**（实测就是这样），
+ * 看起来像「一半生效一半没生效」；而且单独一个 `${json}`（后面没有别的 `$`）
+ * 一次都不会被替换。
+ */
+function 遍历角色段(文本: string, 替换: (段: string, 完整: string) => string): string {
+  const 源 = 文本 ?? '';
+  let 结果 = '';
+  let 位置 = 0;
+  while (位置 < 源.length) {
+    const 起点 = 源.indexOf('$', 位置);
+    if (起点 < 0) {
+      结果 += 源.slice(位置);
+      break;
+    }
+    结果 += 源.slice(位置, 起点);
+
+    // ① `${…}`：花括号配对成功就整段吃掉（字符串里的括号不算）。
+    if (源[起点 + 1] === '{') {
+      const 终点 = 找配对花括号(源, 起点 + 1);
+      if (终点 > 0) {
+        const 段 = 源.slice(起点 + 1, 终点 + 1);
+        结果 += 替换(段, 源.slice(起点, 终点 + 1));
+        // 顺手吃掉 `${…}$` 这个混写里多出来的收尾 `$`。
+        位置 = 源[终点 + 1] === '$' ? 终点 + 2 : 终点 + 1;
+        continue;
+      }
+    }
+
+    // ② `$…$`
+    const 收尾 = 源.indexOf('$', 起点 + 1);
+    if (收尾 < 0) {
+      结果 += 源.slice(起点);
+      break;
+    }
+    结果 += 替换(源.slice(起点 + 1, 收尾), 源.slice(起点, 收尾 + 1));
+    位置 = 收尾 + 1;
+  }
+  return 结果;
+}
+
+/** 从 `{` 开始找配对的 `}`；字符串内的括号与转义符不算。找不到返回 -1。 */
+function 找配对花括号(文本: string, 开始: number): number {
+  let 深度 = 0;
+  let 在字符串 = false;
+  let 转义 = false;
+  for (let i = 开始; i < 文本.length; i += 1) {
+    const 字 = 文本[i];
+    if (转义) { 转义 = false; continue; }
+    if (字 === '\\') { 转义 = true; continue; }
+    if (字 === '"') { 在字符串 = !在字符串; continue; }
+    if (在字符串) continue;
+    if (字 === '{') 深度 += 1;
+    else if (字 === '}') {
+      深度 -= 1;
+      if (深度 === 0) return i;
+    }
+  }
+  return -1;
+}
+
+/**
+ * 宽松解析一个 JSON 段。
+ *
+ * AI 直接写出来的变量常有三处小毛病：尾逗号、中文引号、全角冒号。
+ * 严格 JSON.parse 失败后再修一次 —— 少认一种，用户看到的就是「没生效」。
+ */
+function 解析JSON段(段: string): Record<string, unknown> | null {
+  try {
+    return JSON.parse(段) as Record<string, unknown>;
+  } catch {
+    // 继续走宽松路径
+  }
+  try {
+    return JSON.parse(修JSON标点(段)) as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * 把中文标点修成 JSON 能认的写法（只在**字符串之外**动，避免改坏 tag 内容）。
+ *
+ * 全角引号既当引号也当定界符：中文输入法下写出来的 `{“name”：“流萤”，…}`
+ * 就是这一种，不修的话整段会被原样留在提示词里。
+ */
+function 修JSON标点(段: string): string {
+  let 结果 = '';
+  let 在字符串 = false;
+  for (const 字 of 段) {
+    if (字 === '"') {
+      在字符串 = !在字符串;
+      结果 += 字;
+      continue;
+    }
+    if (字 === '“' || 字 === '”') {
+      在字符串 = 字 === '“';
+      结果 += '"';
+      continue;
+    }
+    if (!在字符串) {
+      if (字 === '：') { 结果 += ':'; continue; }
+      if (字 === '，') { 结果 += ','; continue; }
+      if (字 === '‘' || 字 === '’') { 结果 += "'"; continue; }
+    }
+    结果 += 字;
+  }
+  // 尾逗号：`{"a":1,}` / `[1,2,]`
+  return 结果.replace(/,\s*([}\]])/g, '$1');
+}
+
+/** 解析 `$…$` / `${…}` 段：先 JSON，再旧版后缀。返回 null 表示无法识别。 */
 function 解析角色段(段: string): { 解析: 解析段; 是服装: boolean } | null {
   const 裁剪 = 段.trim();
   if (!裁剪) return null;
 
   if (裁剪.startsWith('{')) {
-    try {
-      const 对象 = JSON.parse(裁剪) as Record<string, unknown>;
+    const 对象 = 解析JSON段(裁剪);
+    if (对象) {
       const 名称 = typeof 对象.name === 'string' ? 对象.name : '';
       if (!名称) return null;
       const upper = typeof 对象.upperBody === 'string' ? (对象.upperBody as 上下身档位) : undefined;
@@ -166,9 +283,8 @@ function 解析角色段(段: string): { 解析: 解析段; 是服装: boolean }
       const framing = typeof framing源 === 'string' ? framing源.trim() : undefined;
       // `angle` 键的存在与否区分角色与服装。
       return { 解析: { 名称, upper, lower, angle, framing }, 是服装: angle === undefined };
-    } catch {
-      return null;
     }
+    return null;
   }
 
   for (const 后缀 of 旧版角色后缀) {
@@ -279,7 +395,7 @@ export function 处理角色提示词(提示词: string, 上下文: 角色匹配
   const 归一 = (提示词 ?? '').replace(/\r?\n/g, ', ');
   const 负面集合: string[] = [];
 
-  const 结果 = 归一.replace(/\$([^$]+)\$/g, (完整, 段: string) => {
+  const 结果 = 遍历角色段(归一, (段, 完整) => {
     const 解析结果 = 解析角色段(段);
     if (!解析结果) return 完整;
     const { 解析, 是服装 } = 解析结果;
@@ -345,7 +461,7 @@ export function 提取出场角色(提示词: string, 上下文: 角色匹配上
   const 结果: 出场角色[] = [];
   const 已见 = new Set<string>();
 
-  归一.replace(/\$([^$]+)\$/g, (完整, 段: string) => {
+  遍历角色段(归一, (段, 完整) => {
     const 解析结果 = 解析角色段(段);
     if (!解析结果 || 解析结果.是服装) return 完整;
     const 角色 = 查找最佳角色(解析结果.解析.名称, 上下文);

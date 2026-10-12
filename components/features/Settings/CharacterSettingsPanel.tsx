@@ -443,7 +443,8 @@ export function CharacterSettingsPanel({
                   想限定**取景**（画面里只出现上半身/下半身）还得给构图词，两种写法都行：
                   直接写在提示词里（<code>upper body, $名字-sfw-upperbody$</code>），
                   或在 JSON 形式里用 <code>framing</code>：
-                  <code className="ml-1">{'{"name":"名字","angle":"","upperBody":"sfw","framing":"upper body"}'}</code>
+                  <code className="ml-1">{'${"name":"名字","angle":"","upperBody":"sfw","framing":"upper body"}'}</code>
+                  （<code>$…$</code> 与 <code>{'${…}'}</code> 两种包法都认）
                   （<code>angle</code> 键的存在与否区分角色与服装，角色要写它，可以是空串）。
                   未识别的名字会原样保留，便于发现写错。
                 </div>

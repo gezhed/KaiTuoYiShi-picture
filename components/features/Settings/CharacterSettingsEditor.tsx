@@ -79,11 +79,13 @@ function 标签清单({
           {
             // 用 JSON.stringify 拼：模板串里的 `${{…}}` 会被当成 `${ 对象 }` 求值成
             // `[object Object]`（踩过一次），这里必须显式序列化。
-            标签: `$${JSON.stringify({ name: 名称, angle: '', upperBody: 'sfw', framing: 'upper body' })}$`,
+            //
+            // 只出镜这两行用 `${…}`：AI 写预设时用的就是这种，复制过去两边都认。
+            标签: `$${JSON.stringify({ name: 名称, angle: '', upperBody: 'sfw', framing: 'upper body' })}`,
             说明: '只要上半身出镜（构图词限制取景）',
           },
           {
-            标签: `$${JSON.stringify({ name: 名称, angle: '', upperBody: 'hidden', lowerBody: 'nsfw', framing: 'lower body' })}$`,
+            标签: `$${JSON.stringify({ name: 名称, angle: '', upperBody: 'hidden', lowerBody: 'nsfw', framing: 'lower body' })}`,
             说明: '只要下半身出镜',
           },
         ]
@@ -252,7 +254,7 @@ export function CharacterSettingsEditor({
 
       <面板
         title="提示词里怎么写"
-        desc="点「复制」拿到整串标签，粘到生图提示词（或「提示词预览」）里即可。只写哪个部位，就只注入那几段字段。"
+        desc="点「复制」拿到整串标签，粘到生图提示词（或「提示词预览」）里即可。只写哪个部位，就只注入那几段字段。两种写法都认：$…$（本应用的）与 ${…}（AI 写预设时常用的），JSON 里的 name 用中文名或英文名都行。"
       >
         {提示 ? <提示条 kind="info" text={提示} /> : null}
         <标签清单

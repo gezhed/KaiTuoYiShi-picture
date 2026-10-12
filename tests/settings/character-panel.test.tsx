@@ -204,8 +204,8 @@ describe('角色管理面板', () => {
     // 角色的部位档位
     expect(await screen.findByText('$流萤-sfw-upperbody$')).toBeInTheDocument();
     expect(screen.getByText('$流萤-nsfw-lowerbody$')).toBeInTheDocument();
-    // 只出镜：构图词走 JSON 形式
-    expect(screen.getByText(/\$\{\"name\":\"流萤\",\"angle\":\"\",\"upperBody\":\"sfw\",\"framing\":\"upper body\"\}\$/)).toBeInTheDocument();
+    // 只出镜：构图词走 JSON 形式，且用 AI 常写的 `${…}` 包法（两种都认）
+    expect(screen.getByText(/^\$\{\"name\":\"流萤\",\"angle\":\"\",\"upperBody\":\"sfw\",\"framing\":\"upper body\"\}$/)).toBeInTheDocument();
     // 服装的三档
     expect(screen.getByText('$战斗服-upperbody$')).toBeInTheDocument();
     expect(screen.getByText('$战斗服-lowerbody$')).toBeInTheDocument();
