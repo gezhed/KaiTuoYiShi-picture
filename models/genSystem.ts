@@ -341,8 +341,15 @@ export interface 角色AI设置 {
   API: { provider: string; baseUrl: string; apiKey: string; model: string };
 }
 
-/** 默认消息序列：顺序照抄「人物生成」预设的 prompt_order（角色卡那一组）。 */
-export function 创建默认角色AI消息(): 角色AI消息[] {
+/**
+ * 「人物生成」预设的消息序列：顺序照抄该预设的 prompt_order（角色卡那一组）。
+ *
+ * 注意它**不是默认值**：默认是空白（见 `创建默认角色AI消息`）。这份序列以
+ * JSON 文件的形式放在 `文生图教程/角色AI预设-人物生成.json`，由用户在
+ * 「角色管理 → 生成」页导入 —— 破甲内容不预置进每个用户的设置里，
+ * 而是让他自己决定要不要用。
+ */
+export function 人物生成预设消息(): 角色AI消息[] {
   // 统一 trim：常量是逐字收录的，末尾可能带换行；默认值本身就是归一化后的形态，
   // 否则「归一化(默认) !== 默认」，水合幂等用例会红（game-settings-hydration）。
   const 消息: 角色AI消息[] = [
@@ -358,6 +365,42 @@ export function 创建默认角色AI消息(): 角色AI消息[] {
     { id: 'discuss-mode', role: 'system', content: 人物生成讨论模式, enabled: false },
   ];
   return 消息.map((项) => ({ ...项, content: 项.content.trim() }));
+}
+
+/**
+ * 角色 AI 的**默认**消息序列：空白。
+ *
+ * 上游的 `characterAI.systemPrompt` 也只是一句占位说明。这一轮改成：
+ * 初始什么都不带，想要的预设自己去「角色管理 → 生成」导入
+ * （`文生图教程/角色AI预设-人物生成.json` 就是「人物生成」那份）。
+ * 好处是用户清楚自己发出去的是什么，坏处是没有格式约束——界面会提示这一点。
+ */
+export function 创建默认角色AI消息(): 角色AI消息[] {
+  return [];
+}
+
+/**
+ * 归一化一串「角色 AI 消息」：导入文件、旧存档都要走这里。
+ *
+ * 规则与旧版一致：丢空内容、未知 role 退回 system、`enabled` 缺省为 true、
+ * id 缺失按序号补。纯函数，不发请求也不碰存储。
+ */
+export function 归一化角色AI消息列表(输入: unknown): 角色AI消息[] {
+  if (!Array.isArray(输入)) return [];
+  const 结果: 角色AI消息[] = [];
+  for (const [序号, 项] of 输入.entries()) {
+    if (!项 || typeof 项 !== 'object') continue;
+    const 源 = 项 as Partial<角色AI消息> & { content?: unknown; role?: unknown };
+    const 内容 = String(源.content ?? '').trim();
+    if (!内容) continue;
+    结果.push({
+      id: String(源.id ?? `msg_${序号 + 1}`),
+      role: 源.role === 'user' || 源.role === 'assistant' ? 源.role : 'system',
+      content: 内容,
+      enabled: 源.enabled !== false,
+    });
+  }
+  return 结果;
 }
 
 export const 默认启用预设名 = '默认启用列表';
@@ -995,7 +1038,13 @@ export function 创建默认LLM设置(): LLM设置 {
   };
 }
 
-/** 一键生成角色特征用的默认配置：提示词取「人物生成」（见 prompts/cot/characterFeaturePrompt.ts）。 */
+/**
+ * 一键生成角色特征用的默认配置。
+ *
+ * 消息序列**默认为空**：想要的预设从 `文生图教程/角色AI预设-人物生成.json` 导入。
+ * 其余参数按「一次产出 14 个字段」的实际情况给足（温度偏高、额度够大、空回重问一次），
+ * 导入的预设若自带这些参数会一并覆盖。
+ */
 export function 创建默认角色AI设置(): 角色AI设置 {
   return {
     消息: 创建默认角色AI消息(),

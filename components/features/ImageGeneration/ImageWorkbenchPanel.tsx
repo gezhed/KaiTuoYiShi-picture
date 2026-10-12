@@ -9,7 +9,7 @@ import { 卸载槽位图片, 槽位键转目标, 旅人槽位选项, 绑定NPC�
 import { 统计图片缓存, 清空图片缓存, 清理过期缓存, 列出缓存图片, 删除缓存图片 } from '@/services/imageCache';
 import { 生成单张插图, 重写提示词标记 } from '@/services/ai/imageGen/generateIllustration';
 import type { 角色匹配上下文 } from '@/services/ai/imageGen/characterPrompt';
-import { 主按钮, 面板, 提示条, 次级按钮, 页签条, 设置字段 as 字段 } from '@/components/features/Settings/settingsPrimitives';
+import { 主按钮, 面板, 提示条, 次级按钮, 开关行, 页签条, 设置字段 as 字段 } from '@/components/features/Settings/settingsPrimitives';
 import { ImageLightbox, type 查看图片项 } from './ImageLightbox';
 import { AvatarEditorDialog } from './AvatarWorkbench';
 import { SlotApplyDialog } from './SlotApplyDialog';
@@ -78,6 +78,8 @@ export function ImageWorkbenchPanel({
   const [缓存出错, set缓存出错] = useState('');
   /** 缓存图的查看器下标；与图库那个分开，避免两处互相顶掉。 */
   const [查看缓存下标, set查看缓存下标] = useState<number | null>(null);
+  /** 默认只给图：提示词往往是几百字的 tag 串，铺在网格里既占地方也难扫。 */
+  const [显示缓存提示词, set显示缓存提示词] = useState(false);
   /** 当前这批缩略图的 objectURL，刷新与卸载时统一回收。 */
   const 缓存地址表 = useRef<string[]>([]);
   /** 图库里点「设置到槽位」时选中的那张图。 */
@@ -349,6 +351,12 @@ export function ImageWorkbenchPanel({
 
       {当前页 === 'cache' && (
         <面板 title="图片缓存" desc="条目以提示词为键，同一提示词的多次生成累积成一条有序图廊。点图可放大、下载或删掉这一张。">
+          <开关行
+            label="显示提示词"
+            desc="关掉只留图（默认）；打开后每张图下面显示它的提示词。"
+            checked={显示缓存提示词}
+            onChange={set显示缓存提示词}
+          />
           <div className="flex flex-wrap items-center gap-2">
             <IconButton icon={RefreshCw} label="刷新缓存" description="重新读取缓存里的图片与容量" onClick={() => void 刷新缓存()} />
             <次级按钮 onClick={() => void 处理清空缓存()}>清空缓存</次级按钮>
@@ -396,8 +404,10 @@ export function ImageWorkbenchPanel({
                     />
                   </div>
                   <figcaption className="px-2 py-1 text-[11px] leading-tight" style={{ color: 'rgba(var(--tj-text-secondary), 0.8)' }}>
-                    <span className="line-clamp-2 block break-words">{项.prompt}</span>
-                    <span className="mt-0.5 block font-mono opacity-70">
+                    {显示缓存提示词 ? (
+                      <span className="line-clamp-2 block break-words">{项.prompt}</span>
+                    ) : null}
+                    <span className={`${显示缓存提示词 ? 'mt-0.5 ' : ''}block font-mono opacity-70`}>
                       {项.dimensions ? `${项.dimensions} · ` : ''}{格式化字节(项.size)} · {new Date(项.createdAt).toLocaleString()}
                     </span>
                   </figcaption>

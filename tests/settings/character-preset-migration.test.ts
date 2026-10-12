@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { 归一化文生图系统设置 } from '@/models/settings';
 import { 人物生成默认提示词 } from '@/prompts/cot/characterFeaturePrompt';
+import { 人物生成预设消息 } from '@/models/genSystem';
 import {
   默认启用预设名,
   默认通用角色列表名,
@@ -94,9 +95,16 @@ describe('归一化文生图系统设置：通用列表与注入模板', () => {
 });
 
 describe('归一化文生图系统设置：角色 AI', () => {
-  it('默认消息序列带破甲与两套格式规格，讨论模式默认停用', () => {
+  it('默认是**空白**预设（新版走导入制），参数给足', () => {
     const 设置 = 归一化文生图系统设置(undefined);
-    const 消息 = 设置.角色AI.消息;
+    expect(设置.角色AI.消息).toEqual([]);
+    expect(设置.角色AI.附加要求).toBe('');
+    expect(设置.角色AI.最大输出).toBeGreaterThanOrEqual(8192);
+    expect(设置.角色AI.重试次数).toBeGreaterThanOrEqual(0);
+  });
+
+  it('「人物生成」预设序列（导入文件的内容）带破甲与两套格式规格，讨论模式停用', () => {
+    const 消息 = 人物生成预设消息();
     expect(消息.length).toBeGreaterThanOrEqual(8);
     const 启用 = 消息.filter((项) => 项.enabled !== false);
     const 文本 = 启用.map((项) => 项.content).join('\n');
@@ -106,8 +114,14 @@ describe('归一化文生图系统设置：角色 AI', () => {
     expect(文本).toContain('下半身NSFW背面');
     expect(文本).toContain('<服装>');
     expect(消息.find((项) => 项.id === 'discuss-mode')?.enabled).toBe(false);
-    expect(设置.角色AI.最大输出).toBeGreaterThanOrEqual(8192);
-    expect(设置.角色AI.重试次数).toBeGreaterThanOrEqual(0);
+  });
+
+  it('升级路径：旧存档带 `提示词` 时补上「人物生成」序列（不让老用户静默失去破甲）', () => {
+    const 设置 = 归一化文生图系统设置({ 角色AI: { 提示词: '旧的内置提示词' } as never });
+    expect(设置.角色AI.消息.length).toBeGreaterThanOrEqual(8);
+    expect(设置.角色AI.消息.map((项) => 项.content).join('\n')).toContain('小克:头好疼，我是谁？');
+    // 旧提示词与内置那条不同 → 当作附加要求保留。
+    expect(设置.角色AI.附加要求).toBe('旧的内置提示词');
   });
 
   it('旧存档的单条提示词：没改过就丢弃（默认序列已含同一条）', () => {
@@ -144,7 +158,8 @@ describe('归一化文生图系统设置：角色 AI', () => {
     const 设置 = 归一化文生图系统设置({ 角色AI: { 温度: 0.3 } as never });
     expect(设置.角色AI.温度).toBe(0.3);
     expect(设置.角色AI.API).toEqual({ provider: '', baseUrl: '', apiKey: '', model: '' });
-    expect(设置.角色AI.消息.length).toBeGreaterThan(0);
+    // 没有 `提示词` 也没有 `消息` → 空白（新装形态）。
+    expect(设置.角色AI.消息).toEqual([]);
   });
 
   it('API 覆盖字段合并保留', () => {

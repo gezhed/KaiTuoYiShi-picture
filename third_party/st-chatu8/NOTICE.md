@@ -59,7 +59,10 @@ under the Aladdin Free Public License, version 9 (AFPL), **at no charge**.
 该文件不是上游代码，因此不受 AFPL 约束；在此登记只为说明「一键生成角色特征」
 的提示词来源与四处适应性修改（载入噪声、`{{lastuserMessage}}`、补「角色特征」行与收口指令、
 行尾归一），详见文件头注释。
-`models/genSystem.ts` 的 `创建默认角色AI消息()` 按同一顺序把它们组装成默认消息序列。
+`models/genSystem.ts` 的 `人物生成预设消息()` 按同一顺序把它们组装成消息序列，
+并由 `tests/services/character-ai-preset.test.ts` 生成/校验
+`文生图教程/角色AI预设-人物生成.json`（该 JSON 是这份常量的导出产物，不是第三方资产）。
+角色 AI 的**默认值**是空白：预设改为导入制，用户自己决定要不要用这份破甲提示词。
 
 ### 1.2 各文件的修改声明
 

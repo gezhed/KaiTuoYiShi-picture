@@ -3,7 +3,8 @@ import { useState } from 'react';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import { CharacterSettingsPanel } from '@/components/features/Settings/CharacterSettingsPanel';
-import { 创建默认文生图系统设置 } from '@/models/genSystem';
+import { 创建默认文生图系统设置, 人物生成预设消息 } from '@/models/genSystem';
+import { 导出角色AI预设文本 } from '@/services/ai/imageGen/characterAIPreset';
 import type { 角色卡, 文生图系统设置 } from '@/models/genSystem';
 import type { 生成角色特征结果 } from '@/services/ai/imageGen/characterFeature';
 
@@ -188,16 +189,36 @@ describe('角色管理面板', () => {
     expect(screen.getByText('写入角色卡')).toBeInTheDocument();
   });
 
-  it('生成页签能看到「人物生成」的破甲消息，讨论模式默认停用', async () => {
+  it('生成页签的预设默认空白，并提示去导入', async () => {
     render(<TestShell 初始={建系统()} />);
     fireEvent.click(screen.getByRole('button', { name: /生成/ }));
+    expect(await screen.findByText(/预设是空白的/)).toBeInTheDocument();
+    // 提示条与面板说明里都写了教程里的文件名，这里只要求至少出现一次。
+    expect(screen.getAllByText(/角色AI预设-人物生成\.json/).length).toBeGreaterThan(0);
+    expect(screen.getByText(/提示词消息（0 条/)).toBeInTheDocument();
+  });
+
+  it('导入预设 JSON 后消息出现（破甲在、讨论模式停用）', async () => {
+    render(<TestShell 初始={建系统()} />);
+    fireEvent.click(screen.getByRole('button', { name: /生成/ }));
+    await screen.findByText(/预设是空白的/);
+
+    const 预设文本 = 导出角色AI预设文本({
+      名称: '人物生成',
+      消息: 人物生成预设消息(),
+      参数: { 温度: 0.9, 最大输出: 12288, 重试次数: 1 },
+    });
+    const 输入 = screen.getByLabelText('选择预设 JSON 文件') as HTMLInputElement;
+    fireEvent.change(输入, { target: { files: [new File([预设文本], '预设.json', { type: 'application/json' })] } });
+
     // 破甲块（初始化）必须在——它就是「经常空回」的修法。
     expect(await screen.findByDisplayValue(/小克:头好疼，我是谁？/)).toBeInTheDocument();
     expect(screen.getByDisplayValue(/<人物>/)).toBeInTheDocument();
     expect(screen.getByDisplayValue(/小克:我们还需要讨论一下角色的服装设计/)).toBeInTheDocument();
-    // 讨论模式收录了但默认停用（它会让模型先写一大段 <talk>）。
+    // 讨论模式收录了但预设里是停用的（它会让模型先写一大段 <talk>）。
     expect(screen.getByDisplayValue(/讨论完毕，开始设计/)).toBeInTheDocument();
     expect(screen.getByText('已停用')).toBeInTheDocument();
+    expect(screen.getByText(/已导入「人物生成」：8 条消息/)).toBeInTheDocument();
   });
 
   it('空回时把服务侧的诊断摆出来，并自动展开原始回复', async () => {

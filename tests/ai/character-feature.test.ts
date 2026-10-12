@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { 角色AI设置, 角色卡 } from '@/models/genSystem';
-import { 创建默认角色AI消息 } from '@/models/genSystem';
+import { 人物生成预设消息 } from '@/models/genSystem';
 import {
   诊断空回,
   合并生成字段,
@@ -48,10 +48,10 @@ function 建角色(覆盖: Partial<角色卡> = {}): 角色卡 {
   };
 }
 
-/** 生效的角色 AI 配置：默认序列（含破甲）+ 不重试。 */
+/** 生效的角色 AI 配置：导入「人物生成」预设后的形态（含破甲）+ 不重试。 */
 function 建角色AI(覆盖: Partial<角色AI设置> = {}): 角色AI设置 {
   return {
-    消息: 创建默认角色AI消息(),
+    消息: 人物生成预设消息(),
     附加要求: '',
     温度: 0.9,
     最大输出: 12288,
@@ -169,7 +169,7 @@ describe('服装草稿转条目', () => {
 });
 
 describe('构建角色特征消息', () => {
-  it('默认消息序列带破甲，且顺序即预设顺序（system 会被合并）', () => {
+  it('「人物生成」预设序列带破甲，且顺序即预设顺序（system 会被合并）', () => {
     const 消息 = 构建角色特征消息({
       要求: '流萤，星核猎手少女，银白长发',
       角色: 建角色({ nameCN: '流萤', facialFeatures: 'green eyes' }),
@@ -199,7 +199,7 @@ describe('构建角色特征消息', () => {
     const 开启讨论 = 构建角色特征消息({
       要求: 'x',
       角色AI: 建角色AI({
-        消息: 创建默认角色AI消息().map((项) => (项.id === 'discuss-mode' ? { ...项, enabled: true } : 项)),
+        消息: 人物生成预设消息().map((项) => (项.id === 'discuss-mode' ? { ...项, enabled: true } : 项)),
       }),
     });
     expect(开启讨论.map((项) => 项.content).join('\n')).toContain('<talk>');

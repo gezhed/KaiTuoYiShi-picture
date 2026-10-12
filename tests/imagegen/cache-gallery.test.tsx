@@ -46,7 +46,7 @@ function 建面板() {
 }
 
 describe('图片缓存页', () => {
-  it('缓存里有图时列出来，并带上提示词与容量', async () => {
+  it('缓存里有图时列出来：默认只给图，提示词由开关控制', async () => {
     await 追加缓存图片('image###1girl, white coat###', new Blob(['aaa'], { type: 'image/png' }), {
       width: 832, height: 1216,
     });
@@ -58,13 +58,17 @@ describe('图片缓存页', () => {
     fireEvent.click(screen.getByRole('button', { name: /图片缓存/ }));
 
     await waitFor(() => {
-      expect(screen.getByText(/1girl, white coat/)).toBeInTheDocument();
+      expect(screen.getAllByRole('img')).toHaveLength(2);
     });
-    expect(screen.getByText(/2girls, rain/)).toBeInTheDocument();
     expect(screen.getByText(/图片 2 张/)).toBeInTheDocument();
-    const 图 = screen.getAllByRole('img');
-    expect(图).toHaveLength(2);
-    expect(图[0].getAttribute('src')).toMatch(/^blob:/);
+    expect(screen.getAllByRole('img')[0].getAttribute('src')).toMatch(/^blob:/);
+    // 默认不显示提示词：图下面的说明里只有尺寸/大小/时间。
+    expect(screen.queryByText(/1girl, white coat/)).toBeNull();
+
+    // 打开开关后才显示提示词。
+    fireEvent.click(screen.getByRole('button', { name: /显示提示词/ }));
+    expect(await screen.findByText(/1girl, white coat/)).toBeInTheDocument();
+    expect(screen.getByText(/2girls, rain/)).toBeInTheDocument();
   });
 
   it('缓存为空时说明原因，而不是留一片空白', async () => {
@@ -81,7 +85,7 @@ describe('图片缓存页', () => {
     建面板();
     fireEvent.click(screen.getByRole('button', { name: /图片缓存/ }));
     await waitFor(() => {
-      expect(screen.getByText(/甲/)).toBeInTheDocument();
+      expect(screen.getAllByRole('img')).toHaveLength(2);
     });
 
     const 删除按钮 = screen.getAllByRole('button', { name: '删除这一张' });
@@ -100,7 +104,7 @@ describe('图片缓存页', () => {
     建面板();
     fireEvent.click(screen.getByRole('button', { name: /图片缓存/ }));
     await waitFor(() => {
-      expect(screen.getByText(/甲/)).toBeInTheDocument();
+      expect(screen.getAllByRole('img')).toHaveLength(1);
     });
 
     fireEvent.click(screen.getByRole('button', { name: '清空缓存' }));

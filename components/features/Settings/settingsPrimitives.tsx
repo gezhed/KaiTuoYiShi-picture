@@ -45,6 +45,8 @@ export function 开关行({
       </div>
       <button
         type="button"
+        /* 开关本身没有文字，把标题给它当无障碍名称：读屏与测试都靠它定位。 */
+        aria-label={label}
         aria-pressed={checked}
         disabled={disabled}
         onClick={() => onChange(!checked)}

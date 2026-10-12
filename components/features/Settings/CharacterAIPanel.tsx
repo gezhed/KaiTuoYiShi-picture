@@ -1,6 +1,6 @@
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import type { 角色AI消息, 角色卡, 角色部位字段, 文生图系统设置 } from '@/models/genSystem';
-import { 创建默认角色AI设置, 创建默认角色AI消息, 角色部位字段名 } from '@/models/genSystem';
+import { 创建默认角色AI设置, 角色部位字段名 } from '@/models/genSystem';
 import type { API配置项 } from '@/models/settings';
 import type { ConnectionTestConfig } from '@/hooks/useAiTools';
 import {
@@ -13,6 +13,11 @@ import {
 } from '@/components/features/Settings/settingsPrimitives';
 import { LLM接口字段 } from './LlmEndpointFields';
 import { 部位字段标签, 建角色卡 } from './CharacterSettingsEditor';
+import {
+  从设置导出预设文本,
+  下载文本文件,
+  解析角色AI预设文本,
+} from '@/services/ai/imageGen/characterAIPreset';
 import {
   合并生成字段,
   服装草稿转条目,
@@ -90,6 +95,8 @@ export function CharacterAIPanel({
    */
   const [字段草稿, set字段草稿] = useState<Record<string, string>>({});
   const [服装草稿列表, set服装草稿列表] = useState<服装草稿[]>([]);
+  /** 导入预设的文件输入（隐藏，由按钮触发）。 */
+  const 文件输入 = useRef<HTMLInputElement | null>(null);
 
   const 角色AI = 设置.角色AI;
   const 有要求 = 要求.trim().length > 0;
@@ -134,6 +141,12 @@ export function CharacterAIPanel({
     set错误('');
     set提示('');
     set结果(null);
+    if (角色AI.消息.filter((项) => 项.enabled !== false).length === 0) {
+      // 不拦着：任务消息本身也要求了 <人物> 格式，可能仍然可用。
+      // 但必须说清「现在没有任何格式约束」，否则用户只会看到解析失败。
+      set提示('当前预设是空白的：模型没有任何格式与尺度约束，多半给不出 <人物> 块。'
+        + '可以导入「文生图教程/角色AI预设-人物生成.json」再试。');
+    }
     set生成中(true);
     try {
       const 生成结果 = await 请求生成({ 系统: 设置, 要求, 角色: 目标角色 });
@@ -208,6 +221,52 @@ export function CharacterAIPanel({
     const 下一 = new Set(勾选字段);
     if (下一.has(键)) 下一.delete(键); else 下一.add(键);
     set勾选字段(下一);
+  };
+
+  /**
+   * 导入预设 JSON。
+   *
+   * 预设默认是空白的（不再是内置那一份），所以这条路是**主入口**：
+   * 仓库里 `文生图教程/角色AI预设-人物生成.json` 就是「人物生成」那份。
+   * 导入只覆盖它明确给出的项：没写的参数保留当前值。
+   */
+  const 处理导入预设 = async (文件列表: FileList | null) => {
+    const 文件 = 文件列表?.[0];
+    if (!文件) return;
+    try {
+      const 文本 = await 文件.text();
+      const { 预设, 错误 } = 解析角色AI预设文本(文本);
+      if (!预设) {
+        set错误(`导入失败：${错误 ?? '文件里没有可用的提示词消息。'}`);
+        return;
+      }
+      onPatch({
+        角色AI: {
+          ...角色AI,
+          消息: 预设.消息,
+          ...(预设.参数?.附加要求 !== undefined ? { 附加要求: 预设.参数.附加要求 } : {}),
+          ...(预设.参数?.温度 !== undefined ? { 温度: 预设.参数.温度 } : {}),
+          ...(预设.参数?.最大输出 !== undefined ? { 最大输出: 预设.参数.最大输出 } : {}),
+          ...(预设.参数?.重试次数 !== undefined ? { 重试次数: 预设.参数.重试次数 } : {}),
+        },
+      });
+      set错误('');
+      set提示(`已导入「${预设.名称 ?? 文件.name}」：${预设.消息.length} 条消息`
+        + `（启用 ${预设.消息.filter((项) => 项.enabled !== false).length} 条）。`);
+    } catch (异常) {
+      set错误(`导入失败：${异常 instanceof Error ? 异常.message : String(异常)}`);
+    }
+  };
+
+  const 处理导出预设 = () => {
+    const 名称 = 目标角色?.nameCN ? `${目标角色.nameCN}-角色AI预设` : '角色AI预设';
+    下载文本文件(`${名称}.json`, 从设置导出预设文本(角色AI, 名称));
+    set提示('已导出当前预设（JSON 文件）。');
+  };
+
+  const 处理清空预设 = () => {
+    onPatch({ 角色AI: { ...角色AI, 消息: [], 附加要求: '' } });
+    set提示('已清空为空白预设。');
   };
 
   const 补丁消息 = (序号: number, 部分: Partial<角色AI消息>) => {
@@ -467,7 +526,7 @@ export function CharacterAIPanel({
       >
         <面板
           title={`提示词消息（${角色AI.消息.length} 条，启用 ${角色AI.消息.filter((项) => 项.enabled !== false).length} 条）`}
-          desc="「人物生成」预设里角色卡那一组的破甲与规格块按原顺序收录。停用某条就不发它——例如模型不肯写 NSFW 时先停用 NSFW 规格，或反过来把讨论模式打开试试。列表限高，可内部滚动（每条都能单独改与启停）。"
+          desc="预设默认是空白的，从 JSON 文件导入（仓库里「文生图教程/角色AI预设-人物生成.json」就是「人物生成」那一份）。顺序即语义，停用某条就不发它。列表限高，可内部滚动（每条都能单独改与启停）。"
         >
           {/* 限高：8 条消息各带一个多行文本框，全展开会把下面的接口设置与「保存」顶到很远。 */}
           <div className="max-h-96 space-y-2 overflow-y-auto pr-1">
@@ -528,13 +587,40 @@ export function CharacterAIPanel({
             >
               新增一条
             </次级按钮>
-            <次级按钮 onClick={() => onPatch({ 角色AI: { ...角色AI, 消息: 创建默认角色AI消息() } })}>
-              恢复「人物生成」默认消息
+            <次级按钮 onClick={() => 文件输入.current?.click()}>导入预设 JSON</次级按钮>
+            <次级按钮 disabled={角色AI.消息.length === 0} onClick={处理导出预设}>导出当前预设</次级按钮>
+            <次级按钮
+              disabled={角色AI.消息.length === 0 && !角色AI.附加要求}
+              onClick={处理清空预设}
+            >
+              清空为空白
             </次级按钮>
             <次级按钮 onClick={() => onPatch({ 角色AI: { ...创建默认角色AI设置() } })}>
-              恢复全部默认
+              恢复全部默认（空白）
             </次级按钮>
+            {/* 隐藏的文件选择：预设改成导入制，这就是主入口。 */}
+            <input
+              ref={文件输入}
+              type="file"
+              accept=".json,application/json"
+              aria-label="选择预设 JSON 文件"
+              className="hidden"
+              onChange={(事件) => {
+                void 处理导入预设(事件.target.files);
+                // 清掉 value：同一个文件连选两次也要能触发。
+                事件.target.value = '';
+              }}
+            />
           </div>
+
+          {角色AI.消息.length === 0 ? (
+            <提示条
+              kind="info"
+              text={'预设是空白的：模型不会收到任何格式与尺度约束，一键生成多半拿不到 <人物> 块。'
+                + '点「导入预设 JSON」选「文生图教程/角色AI预设-人物生成.json」（破甲对话 + 格式规格），'
+                + '也可以自己写几条（第一条建议用 system）。'}
+            />
+          ) : null}
         </面板>
 
         <字段
