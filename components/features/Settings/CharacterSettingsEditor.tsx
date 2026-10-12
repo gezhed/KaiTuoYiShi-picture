@@ -64,8 +64,20 @@ export function 建服装条目(名称: string): 服装条目 {
     下半身: '',
     全身: '',
     负面: '',
+    英文名称: '',
+    归属人: '',
+    上半身背面: '',
+    下半身背面: '',
   };
 }
+
+/** 服装条目上参与编辑的文本字段（分组展示，顺序即界面顺序）。 */
+const 服装字段分组: Array<{ title: string; 字段: Array<keyof 服装条目> }> = [
+  { title: '身份', 字段: ['name', '英文名称', '归属人'] },
+  { title: '正面', 字段: ['上半身', '下半身'] },
+  { title: '背面', 字段: ['上半身背面', '下半身背面', '全身'] },
+  { title: '其它', 字段: ['负面'] },
+];
 
 export function CharacterSettingsEditor({
   角色,
@@ -199,15 +211,24 @@ export function CharacterSettingsEditor({
                     删除
                   </次级按钮>
                 </div>
-                <div className="grid gap-2 md:grid-cols-2">
-                  {(['上半身', '下半身', '全身', '负面'] as const).map((键) => (
-                    <字段 key={键} label={键}>
-                      <input
-                        className="kaituo-input w-full px-2 py-1 text-xs"
-                        value={服装[键]}
-                        onChange={(事件) => 补丁服装(服装.id, { [键]: 事件.target.value })}
-                      />
-                    </字段>
+                <div className="space-y-2">
+                  {服装字段分组.map((组) => (
+                    <div key={组.title} className="space-y-1">
+                      <div className="text-[11px] tracking-[0.18em]" style={{ color: 'rgba(var(--tj-text-secondary), 0.68)' }}>
+                        {组.title}
+                      </div>
+                      <div className="grid gap-2 md:grid-cols-2">
+                        {组.字段.map((键) => (
+                          <字段 key={String(键)} label={键 === 'name' ? '名称' : String(键)}>
+                            <input
+                              className="kaituo-input w-full px-2 py-1 text-xs"
+                              value={String(服装[键] ?? '')}
+                              onChange={(事件) => 补丁服装(服装.id, { [键]: 事件.target.value } as Partial<服装条目>)}
+                            />
+                          </字段>
+                        ))}
+                      </div>
+                    </div>
                   ))}
                 </div>
               </div>

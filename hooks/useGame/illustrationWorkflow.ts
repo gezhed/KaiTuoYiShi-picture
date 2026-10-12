@@ -1,11 +1,11 @@
 import type { UseGameStateReturn } from '@/hooks/useGameState';
-import type { API配置项, 游戏设置, 文生图系统设置 } from '@/models/settings';
+import type { 文生图系统设置 } from '@/models/settings';
 import type { 叙事插图, 聊天消息 } from '@/models/chat';
 import type { 相册系统 } from '@/models/imageGeneration';
-import { resolveApiOverrideFields, type API覆盖字段 } from '@/models/settings';
 import { chatCompletionNonStream } from '@/services/ai/chatCompletionClient';
 import type { 传输诊断 } from '@/services/ai/imageGen/illustrationAgent';
 import { 思考工具声明, 默认工具名 } from '@/services/ai/imageGen/illustrationAgent';
+import { 取文生图LLM配置 } from '@/services/ai/imageGen/llmConfig';
 import { 创建相册图片条目, 添加图片到相册 } from '@/utils/albumActions';
 import { writeLeafNode } from '@/services/storage/saveTree';
 import { 读取已落盘资产记录, 写入已落盘资产记录, loadSave, loadSaveIdByNodeId } from '@/services/storage/saveCrud';
@@ -51,42 +51,6 @@ export interface 插图作业结果 {
 export interface 归档条目 {
   asset: import('@/models/imageGeneration').图片资源;
   entry: import('@/models/imageGeneration').相册条目;
-}
-
-function 取LLM配置(设置: 游戏设置, apiSettings: UseGameStateReturn['deviceSettings']['apiSettings']): API配置项 | null {
-  const LLM = 设置.文生图系统.LLM;
-  if (!LLM.启用) return null;
-  const 主配置 = apiSettings.configs.find((项) => 项.id === apiSettings.activeConfigId) ?? null;
-  const 解析后 = resolveApiOverrideFields(
-    {
-      provider: (LLM.API.provider || '') as API覆盖字段['provider'],
-      baseUrl: LLM.API.baseUrl,
-      apiKey: LLM.API.apiKey,
-      model: LLM.API.model,
-      temperature: LLM.温度,
-      retryCount: LLM.重试次数,
-    },
-    主配置,
-  );
-  if (!解析后.baseUrl.trim() || !解析后.model.trim()) return null;
-  const id = '__image_illustration_converter__';
-  // 空 provider 表示回退主 API；回退后仍为空时按 OpenAI 兼容处理。
-  const provider: API配置项['provider'] = (解析后.provider || 'openai_compatible') as API配置项['provider'];
-  if (主配置?.id === id) return { ...主配置, ...解析后, provider };
-  return {
-    id,
-    name: '文生图LLM',
-    provider,
-    baseUrl: 解析后.baseUrl,
-    apiKey: 解析后.apiKey,
-    model: 解析后.model,
-    maxTokens: 解析后.maxTokens,
-    temperature: 解析后.temperature,
-    retryCount: 解析后.retryCount,
-    enableClaudeMode: 设置.enableClaudeMode,
-    createdAt: 0,
-    updatedAt: 0,
-  };
 }
 
 export function 组装角色上下文(设置: 文生图系统设置): 角色匹配上下文 {
@@ -137,7 +101,7 @@ export function 构造插图依赖(
 ): 插图流水线依赖 {
   const 设置 = state.deviceSettings.gameSettings;
   const 系统 = 设置.文生图系统;
-  const LLM配置 = 取LLM配置(设置, state.deviceSettings.apiSettings);
+  const LLM配置 = 取文生图LLM配置(设置, state.deviceSettings.apiSettings);
 
   return {
     生成提示词: async ({ 正文, signal }) => {

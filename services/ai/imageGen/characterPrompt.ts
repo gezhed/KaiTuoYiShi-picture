@@ -218,9 +218,11 @@ export function 拼装角色替换(角色: 角色卡, 格式: 角色替换格式
 
 function 拼装服装替换(服装: 服装条目, 格式: 角色替换格式): string {
   const 片段: string[] = [];
-  // 背后视角取全身描述，否则上下身分别取；来源的服装表同样只有这三段。
+  // 背后视角：优先用新增的背面字段；旧服装没有背面字段时沿用 `全身`（原行为）。
   if (格式.fromBehind) {
-    片段.push(服装.全身);
+    const 背面 = [服装.上半身背面, 服装.下半身背面].filter((项): 项 is string => Boolean(项));
+    if (背面.length > 0) 片段.push(...背面);
+    else 片段.push(服装.全身);
   } else {
     if (格式.upper === 'visible') 片段.push(服装.上半身);
     if (格式.lower === 'visible') 片段.push(服装.下半身);

@@ -43,6 +43,13 @@ interface Props {
   主API名?: string;
   主API模型?: string;
   主API地址?: string;
+  /** 一键生成角色特征的模型调用；不接时「生成」页签会禁用按钮。 */
+  生成角色特征?: (参数: {
+    系统: import('@/models/genSystem').文生图系统设置;
+    要求: string;
+    角色?: import('@/models/genSystem').角色卡;
+    signal?: AbortSignal;
+  }) => Promise<import('@/services/ai/imageGen/characterFeature').生成角色特征结果>;
 }
 
 const 页签: Array<{ id: Comfy页签; label: string; desc: string }> = [
@@ -76,6 +83,7 @@ export function ComfyUISettingsConsole({
   主API名,
   主API模型,
   主API地址,
+  生成角色特征,
 }: Props) {
   const [当前页, set当前页] = useState<Comfy页签>('overview');
   const [保存提示, set保存提示] = useState<{ kind: 'info' | 'ok' | 'error'; text: string } | null>(null);
@@ -89,6 +97,8 @@ export function ComfyUISettingsConsole({
   const [追加目标, set追加目标] = useState('角色特征');
   const [sd资源, setSd资源] = useState<SD可选资源 | null>(null);
   const [sd提示, setSd提示] = useState<{ kind: 'info' | 'ok' | 'error'; text: string } | null>(null);
+  // 改动后是否还没落到本机。不是精确的脏值比对，只用来提醒「别忘了点保存」。
+  const [有未保存, set有未保存] = useState(false);
 
   const 系统 = settings.文生图系统;
   const 档案 = 系统.comfyui.档案列表[系统.comfyui.当前档案];
@@ -99,6 +109,7 @@ export function ComfyUISettingsConsole({
   );
 
   const 补丁系统 = (补丁: Partial<typeof 系统>) => {
+    set有未保存(true);
     onChange({ ...settings, 文生图系统: { ...系统, ...补丁 } });
   };
   const 补丁comfyui = (补丁: Partial<typeof 系统.comfyui>) => {
@@ -150,6 +161,7 @@ export function ComfyUISettingsConsole({
     set保存提示(null);
     try {
       await onPersistSettings(settings);
+      set有未保存(false);
       set保存提示({ kind: 'ok', text: '文生图设置已保存。' });
     } catch (错误) {
       set保存提示({ kind: 'error', text: `保存失败：${错误 instanceof Error ? 错误.message : String(错误)}` });
@@ -1033,6 +1045,8 @@ export function ComfyUISettingsConsole({
           待追加={待追加标签}
           追加序号={追加序号}
           on追加目标变更={set追加目标}
+          未保存={有未保存}
+          请求生成={生成角色特征}
         />
       )}
 

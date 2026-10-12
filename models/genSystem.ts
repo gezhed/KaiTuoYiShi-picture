@@ -15,6 +15,8 @@
  * 命名沿用移植方的领域中文，与来源字段名保持可对照关系（见每条注释）。
  */
 
+import { 人物生成默认提示词 } from '@/prompts/cot/characterFeaturePrompt';
+
 /** 生图渠道。第一轮只实现 ComfyUI；其余为后续轮次登记位。 */
 export type 生图渠道 = 'comfyui' | 'novelai' | 'sd' | 'banana' | 'runninghub';
 
@@ -155,6 +157,15 @@ export interface 服装条目 {
   下半身: string;
   全身: string;
   负面: string;
+  /**
+   * 以下四项是可选扩展：上游的服装还有「英文名称 / 归属人 / 上半身背面 / 下半身背面」，
+   * 而本仓库早先只落了四段正文。旧存档没有这些字段，缺省按空串处理；
+   * 有了它们，`from behind` 视角与注入模板 `{nameEN}` / `{upperBodyBack}` 才有真实内容。
+   */
+  英文名称?: string;
+  归属人?: string;
+  上半身背面?: string;
+  下半身背面?: string;
 }
 
 /**
@@ -233,6 +244,276 @@ export function 创建空角色部位字段(): 角色部位字段 {
     fullBodyNSFWBack: '',
     negative: '',
   };
+}
+
+/* ------------------------------------------------------------------ *
+ * 角色启用列表 / 通用列表 / 提示词注入模板 / 角色 AI
+ * （来源：`characterEnablePresets` L24667-L24686、`characterCommonPresets`、
+ *   `outfitEnablePresets`、`injectionTemplates` L29628-L29755、`characterAI` L24688）
+ * ------------------------------------------------------------------ */
+
+/**
+ * 启用列表里的一条角色记录。
+ *
+ * 上游的条目是**对象**而不是裸名字（`normalizeCharacterEnableEntry` L24528-L24543）：
+ * 每条可以各自绑定一张图片与一段音频，注入 `{{角色启用列表}}` 时用条目上的
+ * 覆盖值，没有再回退到角色卡自己的照片/音频。裸字符串是旧格式，归一化时补齐。
+ */
+export interface 角色启用条目 {
+  角色Id: string;
+  /** 覆盖角色卡选中的照片；空串表示回退角色卡。 */
+  图片媒体Id: string;
+  音频媒体Id: string;
+  图片描述: string;
+  音频描述: string;
+}
+
+/** 一个启用列表预设。`绑定*` 是上游的「绑定角色卡 / 绑定聊天记录」，仅作标记与提示。 */
+export interface 角色启用预设 {
+  条目: 角色启用条目[];
+  绑定角色卡: string;
+  绑定聊天: string;
+}
+
+/** 通用角色列表（`characterCommonPresets[id].characters`）。 */
+export interface 通用角色列表预设 {
+  角色: string[];
+}
+
+/** 通用服装启用列表（`outfitEnablePresets[id].outfits`）。 */
+export interface 通用服装列表预设 {
+  服装: string[];
+}
+
+/**
+ * 提示词注入模板（`injectionTemplates.presets[id]`）。
+ *
+ * `{变量}` 占位符由 `应用注入模板` 渲染；**整行占位符全为空时该行被丢掉**，
+ * 全部占位行都被丢掉时整体返回空串（`applyInjectionTemplate` L29201-L29230）。
+ */
+export interface 注入模板集 {
+  角色列表: string;
+  卡内服装: string;
+  通用角色列表: string;
+  通用服装列表: string;
+}
+
+/**
+ * 角色 AI（`characterAI` L24688）：一键生成角色特征用的提示词与采样参数。
+ *
+ * 上游还有 `model` 字段，本应用改为与出图 LLM 一致的四段式 API 覆盖：
+ * 留空即回退「文生图 → LLM 预设」的接口，再回退主 API。
+ */
+export interface 角色AI设置 {
+  提示词: string;
+  温度: number;
+  最大输出: number;
+  API: { provider: string; baseUrl: string; apiKey: string; model: string };
+}
+
+export const 默认启用预设名 = '默认启用列表';
+export const 默认通用角色列表名 = '默认通用角色列表';
+export const 默认通用服装列表名 = '默认服装列表';
+export const 默认注入模板名 = '默认方案';
+
+/**
+ * 上游内置的四套注入模板（`SYSTEM_INJECTION_TEMPLATES` L29634-L29755），逐字收录。
+ *
+ * 差异说明：上游只有「默认方案」是内建默认，其余三套（含 `视频注入`）在
+ * `ensureInjectionTemplatesInit` 里注册。本应用一并内建，但默认当前模板取
+ * 「默认方案」——上游把当前模板指向「视频注入」是因为它有自己的视频链路，本应用没有。
+ */
+export const 内置注入模板: Record<string, 注入模板集> = {
+  默认方案: {
+    角色列表: [
+      '中文名称：{nameCN}',
+      '英文名称：{nameEN}',
+      '角色特征：{traits}',
+      '五官外貌（正面）：{facial}',
+      '五官外貌（背面）：{facialBack}',
+      '上半身SFW（正面）：{upperSFW}',
+      '上半身SFW（背面）：{upperSFWBack}',
+      '下半身SFW（正面）：{lowerSFW}',
+      '下半身SFW（背面）：{lowerSFWBack}',
+      '上半身NSFW（正面）：{upperNSFW}',
+      '上半身NSFW（背面）：{upperNSFWBack}',
+      '下半身NSFW（正面）：{lowerNSFW}',
+      '下半身NSFW（背面）：{lowerNSFWBack}',
+      '服装列表：{outfits}',
+      '角色图片：[{imageId}] {imageDesc}',
+      '角色音频：[{audioId}] {audioDesc}',
+    ].join('\n'),
+    卡内服装: [
+      '  中文名称：{nameCN}',
+      '  英文名称：{nameEN}',
+      '  上半身（正面）：{upperBody}',
+      '  上半身（背面）：{upperBodyBack}',
+      '  下半身（正面）：{lowerBody}',
+      '  下半身（背面）：{lowerBodyBack}',
+    ].join('\n'),
+    通用角色列表: '{nameCN} {nameEN}',
+    通用服装列表: [
+      '中文名称：{nameCN}',
+      '英文名称：{nameEN}',
+      '上半身（正面）：{upperBody}',
+      '上半身（背面）：{upperBodyBack}',
+      '下半身（正面）：{lowerBody}',
+      '下半身（背面）：{lowerBodyBack}',
+    ].join('\n'),
+  },
+  'Tavern XML 格式': {
+    角色列表: [
+      '<character id="{nameEN}" cn="{nameCN}">',
+      '  [Traits] {traits}',
+      '  [Face] Front: {facial}',
+      '  [Face] Back: {facialBack}',
+      '  [SFW] Upper: {upperSFW}',
+      '  [SFW] Lower: {lowerSFW}',
+      '  [NSFW] Upper: {upperNSFW}',
+      '  [NSFW] Lower: {lowerNSFW}',
+      '  [Outfits]{outfits}',
+      '  [Image] {imageId}: {imageDesc}',
+      '  [Audio] {audioId}: {audioDesc}',
+      '</character>',
+    ].join('\n'),
+    卡内服装: [
+      '  <outfit id="{nameEN}" cn="{nameCN}">',
+      '    [Upper] {upperBody}',
+      '    [Lower] {lowerBody}',
+      '  </outfit>',
+    ].join('\n'),
+    通用角色列表: '<common_character id="{nameEN}" cn="{nameCN}" />',
+    通用服装列表: [
+      '<common_outfit id="{nameEN}" cn="{nameCN}">',
+      '  [Upper] {upperBody}',
+      '  [Lower] {lowerBody}',
+      '</common_outfit>',
+    ].join('\n'),
+  },
+  'Markdown 极简卡片': {
+    角色列表: [
+      '### {nameCN}（{nameEN}）',
+      '- 特征：{traits}',
+      '- 五官：{facial}',
+      '- 上半身：{upperSFW}',
+      '- 下半身：{lowerSFW}',
+      '- 上半身NSFW：{upperNSFW}',
+      '- 下半身NSFW：{lowerNSFW}',
+      '- 服装：{outfits}',
+      '- 图片：[{imageId}] {imageDesc}',
+      '- 音频：[{audioId}] {audioDesc}',
+    ].join('\n'),
+    卡内服装: [
+      '  - **{nameCN}**（{nameEN}）',
+      '    - 上半身：{upperBody}',
+      '    - 下半身：{lowerBody}',
+    ].join('\n'),
+    通用角色列表: '- {nameCN}（{nameEN}）',
+    通用服装列表: [
+      '### {nameCN}（{nameEN}）',
+      '- 上半身：{upperBody}',
+      '- 下半身：{lowerBody}',
+    ].join('\n'),
+  },
+  视频注入: {
+    角色列表: [
+      '<character id="{nameEN}" cn="{nameCN}">',
+      '  [Traits] {traits}',
+      '  [image_id]:{imageId} 说明:{imageDesc}',
+      '  [audio_id]:{audioId} 说明:{audioDesc}',
+      '  [Face] Front: {facial}',
+      '  [Face] Back: {facialBack}',
+      '  [SFW] Upper: {upperSFW}',
+      '  [SFW] Lower: {lowerSFW}',
+      '  [NSFW] Upper: {upperNSFW}',
+      '  [NSFW] Lower: {lowerNSFW}',
+      '  [Outfits]{outfits}',
+      '</character>',
+    ].join('\n'),
+    卡内服装: [
+      '  <outfit id="{nameEN}" cn="{nameCN}">',
+      '    [Upper] {upperBody}',
+      '    [Lower] {lowerBody}',
+      '  </outfit>',
+    ].join('\n'),
+    通用角色列表: '<common_character id="{nameEN}" cn="{nameCN}" />',
+    通用服装列表: [
+      '<common_outfit id="{nameEN}" cn="{nameCN}">',
+      '  [Upper] {upperBody}',
+      '  [Lower] {lowerBody}',
+      '</common_outfit>',
+    ].join('\n'),
+  },
+};
+
+export const 内置注入模板名列表 = Object.keys(内置注入模板);
+
+/** 归一化一条启用条目：裸字符串（旧格式）补齐成对象。 */
+export function 归一化角色启用条目(input: unknown): 角色启用条目 | null {
+  if (typeof input === 'string') {
+    const 名 = input.trim();
+    return 名 ? { 角色Id: 名, 图片媒体Id: '', 音频媒体Id: '', 图片描述: '', 音频描述: '' } : null;
+  }
+  if (!input || typeof input !== 'object') return null;
+  const 源 = input as Record<string, unknown>;
+  // 上游接受的别名：`characterPresetName || name || presetName`（L24538）。
+  const 角色Id = String(源.角色Id ?? 源.characterPresetName ?? 源.name ?? 源.presetName ?? '').trim();
+  if (!角色Id) return null;
+  return {
+    角色Id,
+    图片媒体Id: String(源.图片媒体Id ?? 源.imageFileId ?? ''),
+    音频媒体Id: String(源.音频媒体Id ?? 源.audioFileId ?? ''),
+    图片描述: String(源.图片描述 ?? 源.imageDescription ?? ''),
+    音频描述: String(源.音频描述 ?? 源.audioDescription ?? ''),
+  };
+}
+
+export function 归一化角色启用预设(input: unknown): 角色启用预设 {
+  const 源 = (input ?? {}) as Record<string, unknown>;
+  const 原条目 = Array.isArray(源.条目)
+    ? 源.条目
+    : Array.isArray(源.characters)
+      ? 源.characters
+      : [];
+  const 条目: 角色启用条目[] = [];
+  const 已见 = new Set<string>();
+  for (const 项 of 原条目) {
+    const 归一 = 归一化角色启用条目(项);
+    if (!归一 || 已见.has(归一.角色Id)) continue;
+    已见.add(归一.角色Id);
+    条目.push(归一);
+  }
+  return {
+    条目,
+    绑定角色卡: String(源.绑定角色卡 ?? 源.bindCharacterCard ?? ''),
+    绑定聊天: String(源.绑定聊天 ?? 源.bindChatId ?? ''),
+  };
+}
+
+/** 启用预设 → 扁平的 id 列表（`角色启用列表` 是它镜像出来的供引擎读取的视图）。 */
+export function 镜像启用列表(预设: 角色启用预设 | undefined): string[] {
+  return (预设?.条目 ?? []).map((项) => 项.角色Id).filter(Boolean);
+}
+
+export function 归一化注入模板集(input: unknown): 注入模板集 {
+  const 源 = (input ?? {}) as Record<string, unknown>;
+  const 默认 = 内置注入模板[默认注入模板名];
+  return {
+    角色列表: String(源.角色列表 ?? 源.characterListTemplate ?? 默认.角色列表),
+    卡内服装: String(源.卡内服装 ?? 源.innerOutfitTemplate ?? 默认.卡内服装),
+    通用角色列表: String(源.通用角色列表 ?? 源.commonCharacterListTemplate ?? 默认.通用角色列表),
+    通用服装列表: String(源.通用服装列表 ?? 源.enableOutfitListTemplate ?? 默认.通用服装列表),
+  };
+}
+
+export function 创建默认角色启用预设列表(): Record<string, 角色启用预设> {
+  return { [默认启用预设名]: { 条目: [], 绑定角色卡: '', 绑定聊天: '' } };
+}
+
+export function 创建默认注入模板列表(): Record<string, 注入模板集> {
+  const 结果: Record<string, 注入模板集> = {};
+  for (const [名称, 模板] of Object.entries(内置注入模板)) 结果[名称] = { ...模板 };
+  return 结果;
 }
 
 /* ------------------------------------------------------------------ *
@@ -517,7 +798,26 @@ export interface 文生图系统设置 {
   提示词: 提示词设置;
   LLM: LLM设置;
   角色卡: Record<string, 角色卡>;
+  /**
+   * 当前启用的角色 id 列表。
+   *
+   * 它是**当前启用预设的镜像**：真正的数据在 `角色启用预设列表[当前启用预设]`，
+   * 每次改预设都会同步这一份。保留扁平视图是为了让出图引擎（`$…$` 匹配、
+   * 参考图挑选、NovelAI Vibe）不必关心预设概念。
+   */
   角色启用列表: string[];
+  角色启用预设列表: Record<string, 角色启用预设>;
+  当前启用预设: string;
+  /** `{{通用角色启用列表}}` 的数据源。 */
+  通用角色列表: Record<string, 通用角色列表预设>;
+  当前通用角色列表: string;
+  /** `{{通用服装启用列表}}` 的数据源。 */
+  通用服装列表: Record<string, 通用服装列表预设>;
+  当前通用服装列表: string;
+  注入模板列表: Record<string, 注入模板集>;
+  当前注入模板: string;
+  /** 一键生成角色特征。 */
+  角色AI: 角色AI设置;
   /** 正文自动配图：每条正文最多几张、触发时机。 */
   正文配图: 正文配图设置;
   图片缓存: 图片缓存设置;
@@ -642,6 +942,17 @@ export function 创建默认LLM设置(): LLM设置 {
     重试次数: 2,
     // 一次要产出多张图的提示词，给足余量；32k 是当前主流模型的常见上限。
     最大输出: 32768,
+    API: { provider: '', baseUrl: '', apiKey: '', model: '' },
+  };
+}
+
+/** 一键生成角色特征用的默认配置：提示词取「人物生成」（见 prompts/cot/characterFeaturePrompt.ts）。 */
+export function 创建默认角色AI设置(): 角色AI设置 {
+  return {
+    提示词: 人物生成默认提示词,
+    温度: 0.9,
+    // 一次要产出 14 个部位字段，且每个字段都是 tag 串；给不足会在半途被截断。
+    最大输出: 8192,
     API: { provider: '', baseUrl: '', apiKey: '', model: '' },
   };
 }
@@ -774,6 +1085,15 @@ export function 创建默认文生图系统设置(): 文生图系统设置 {
     LLM: 创建默认LLM设置(),
     角色卡: {},
     角色启用列表: [],
+    角色启用预设列表: 创建默认角色启用预设列表(),
+    当前启用预设: 默认启用预设名,
+    通用角色列表: { [默认通用角色列表名]: { 角色: [] } },
+    当前通用角色列表: 默认通用角色列表名,
+    通用服装列表: { [默认通用服装列表名]: { 服装: [] } },
+    当前通用服装列表: 默认通用服装列表名,
+    注入模板列表: 创建默认注入模板列表(),
+    当前注入模板: 默认注入模板名,
+    角色AI: 创建默认角色AI设置(),
     正文配图: {
       启用: false,
       模式: 'manual',

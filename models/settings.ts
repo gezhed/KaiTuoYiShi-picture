@@ -332,6 +332,12 @@ export type {
   服装条目,
   角色卡,
   角色位置,
+  角色启用条目,
+  角色启用预设,
+  通用角色列表预设,
+  通用服装列表预设,
+  注入模板集,
+  角色AI设置,
   词条,
   词库分组,
   词库子分组,
@@ -358,11 +364,36 @@ export {
   创建默认ComfyUI设置,
   创建默认提示词设置,
   创建默认LLM设置,
+  创建默认角色AI设置,
+  创建默认角色启用预设列表,
+  创建默认注入模板列表,
+  默认启用预设名,
+  默认通用角色列表名,
+  默认通用服装列表名,
+  默认注入模板名,
+  内置注入模板,
+  内置注入模板名列表,
+  镜像启用列表,
+  归一化角色启用条目,
+  归一化角色启用预设,
+  归一化注入模板集,
   创建默认文生图系统设置,
 } from './genSystem';
 
 import {
   创建默认文生图系统设置,
+  创建默认注入模板列表,
+  默认启用预设名,
+  默认通用角色列表名,
+  默认通用服装列表名,
+  默认注入模板名,
+  镜像启用列表,
+  归一化角色启用预设,
+  归一化注入模板集,
+  type 角色启用预设,
+  type 通用角色列表预设,
+  type 通用服装列表预设,
+  type 注入模板集,
   type 文生图系统设置,
 } from './genSystem';
 
@@ -378,10 +409,72 @@ export function 归一化文生图系统设置(input?: Partial<文生图系统�
   const 合并 = { ...defaults, ...input };
   合并.启用 = input.启用 === true;
   合并.渠道 = input.渠道 ?? defaults.渠道;
-  合并.角色启用列表 = Array.isArray(input.角色启用列表)
+  合并.角色卡 = input.角色卡 ?? {};
+
+  /*
+   * 角色启用：v1 存档只有一个扁平的 `角色启用列表`，没有预设概念。
+   * 升级方式是把它收进「默认启用列表」这一个预设里，之后两者保持镜像——
+   * 预设是数据源（条目上带各自的图片/音频绑定），扁平的 `角色启用列表`
+   * 是给引擎读的视图（`$…$` 匹配、参考图挑选都只认它）。
+   */
+  const 旧启用列表 = Array.isArray(input.角色启用列表)
     ? input.角色启用列表.map((项) => String(项)).filter(Boolean)
     : [];
-  合并.角色卡 = input.角色卡 ?? {};
+  const 启用预设列表: Record<string, 角色启用预设> = {};
+  for (const [名称, 预设] of Object.entries(input.角色启用预设列表 ?? {})) {
+    启用预设列表[名称] = 归一化角色启用预设(预设);
+  }
+  if (Object.keys(启用预设列表).length === 0) {
+    启用预设列表[默认启用预设名] = 归一化角色启用预设({
+      条目: 旧启用列表.map((角色Id) => ({ 角色Id })),
+    });
+  }
+  合并.角色启用预设列表 = 启用预设列表;
+  合并.当前启用预设 = typeof input.当前启用预设 === 'string' && 启用预设列表[input.当前启用预设]
+    ? input.当前启用预设
+    : Object.keys(启用预设列表)[0];
+  合并.角色启用列表 = 镜像启用列表(启用预设列表[合并.当前启用预设]);
+
+  const 归一化字符串列表 = (值: unknown): string[] => (
+    Array.isArray(值)
+      ? 值.filter((项) => 项 !== null && 项 !== undefined).map((项) => String(项)).filter(Boolean)
+      : []
+  );
+  const 通用角色列表: Record<string, 通用角色列表预设> = {};
+  for (const [名称, 预设] of Object.entries(input.通用角色列表 ?? {})) {
+    通用角色列表[名称] = { 角色: 归一化字符串列表((预设 as 通用角色列表预设 | undefined)?.角色) };
+  }
+  if (Object.keys(通用角色列表).length === 0) 通用角色列表[默认通用角色列表名] = { 角色: [] };
+  合并.通用角色列表 = 通用角色列表;
+  合并.当前通用角色列表 = typeof input.当前通用角色列表 === 'string' && 通用角色列表[input.当前通用角色列表]
+    ? input.当前通用角色列表
+    : Object.keys(通用角色列表)[0];
+
+  const 通用服装列表: Record<string, 通用服装列表预设> = {};
+  for (const [名称, 预设] of Object.entries(input.通用服装列表 ?? {})) {
+    通用服装列表[名称] = { 服装: 归一化字符串列表((预设 as 通用服装列表预设 | undefined)?.服装) };
+  }
+  if (Object.keys(通用服装列表).length === 0) 通用服装列表[默认通用服装列表名] = { 服装: [] };
+  合并.通用服装列表 = 通用服装列表;
+  合并.当前通用服装列表 = typeof input.当前通用服装列表 === 'string' && 通用服装列表[input.当前通用服装列表]
+    ? input.当前通用服装列表
+    : Object.keys(通用服装列表)[0];
+
+  // 注入模板：内置的四套永远在（缺了补回来），用户自建的同名可覆盖内置。
+  const 注入模板列表: Record<string, 注入模板集> = { ...创建默认注入模板列表() };
+  for (const [名称, 模板] of Object.entries(input.注入模板列表 ?? {})) {
+    注入模板列表[名称] = 归一化注入模板集(模板);
+  }
+  合并.注入模板列表 = 注入模板列表;
+  合并.当前注入模板 = typeof input.当前注入模板 === 'string' && 注入模板列表[input.当前注入模板]
+    ? input.当前注入模板
+    : 默认注入模板名;
+
+  合并.角色AI = {
+    ...defaults.角色AI,
+    ...(input.角色AI ?? {}),
+    API: { ...defaults.角色AI.API, ...(input.角色AI?.API ?? {}) },
+  };
 
   const comfyui = input.comfyui ?? defaults.comfyui;
   const 档案列表 = comfyui.档案列表 && Object.keys(comfyui.档案列表).length > 0

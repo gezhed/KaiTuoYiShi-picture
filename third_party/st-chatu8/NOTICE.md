@@ -37,13 +37,25 @@ under the Aladdin Free Public License, version 9 (AFPL), **at no charge**.
 | `wordReplacement.ts` | `parseWordReplacementRules` L15958–L15988；`applyWordReplacementRules` L15989–L16025；默认映射 L2470–L2471 |
 | `illustrationProtocol.ts` | `parseImagesFromPrompt` L16700–L16838；`convertNewXmlFormatToOld` L16610–L16699；锚点匹配 L16840–L17100 |
 | `characterPrompt.ts` | `processCharacterPrompt` L33416–L33658；`normalizeName` L33134；`calculateMatchScore` L33137–L33151；`findBestCharacterMatch` L33232–L33280 |
+| `characterInjection.ts` | `applyInjectionTemplate` L29201–L29230；`getCharacterPromptData` L29155–L29183；`getOutfitPromptData` L29184–L29197；`renderCharacterOutfitsText` L29277–L29287；`isCharacterTriggered` L29826–L29847；`getTriggeredCharacterName` L29848–L29869；`generateCharacterListText` L29908–L29958；`generateOutfitEnableListText` L29959–L29980；`generateCommonCharacterListText` L29981–L30003 |
+| `characterFeature.ts` | `preprocessTagContent2` L30312–L30318；`parseCharacterData` L30319–L30367；`parseOutfitData2` L30368–L30405；`extractCharacterAndOutfitTags` L30406–L30445；`buildCharacterText` L30468–L30490；`handleCharacterPromptModify` L30491–L30581；`updateCharacterPresetFromLLM` L30582+ |
+| `characterTransfer.ts` | `encryptBase64`/`decryptBase64` L24705–L24722；`encryptCharacterPreset` L24763–L24781；`encryptOutfitPreset` L24804–L24822；`encryptListPreset` L24823–L24855；`encryptExportData` L24856–L24958；`decryptImportData` L24960–L25066；`exportCharacterPreset` L31665–L31746；`exportAllCharacterPresets` L31747–L31836；`importCharacterPreset` L31837–L31960 |
+| `llmConfig.ts` | `llm_profiles` 取值段与 `buildPromptForRequestType` L20924 的接口选择部分（改写为覆盖字段 + 主 API 合并） |
 | `illustrationAgent.ts` | `LLMRequestTypes.IMAGE_GEN` L2409；`handlePromptRequest` L38919；`processImageLikeRequest` L39259；`buildPromptForRequestType` L20924；`buildParseFailureToastInfo` L38471–L38589 |
 | `generateIllustration.ts` | `generateComfyUIImage` 提示词段 L47215–L47348；`comfyuigenerate` 落库段 L47706–L47760 |
 | `illustrationPipeline.ts` | `insertImagesIntoElement` L16840–L17185；`chat[id].extra.images[swipe_id]` L17541–L17555 |
 
 `models/genSystem.ts` 的类型与默认值来自上游 `utils/config.js` 的 `defaultSettings`
-（L2437–L3215）、`utils/characterprompt.js` 的 `CHARACTER_FIELDS`（L33113–L33128）
-与 `defaultCharacterSettings`（L24604–L24700）。
+（L2437–L3215）、`utils/characterprompt.js` 的 `CHARACTER_FIELDS`（L33113–L33128）、
+`defaultCharacterSettings`（L24604–L24700，含 `characterEnablePresets` /
+`characterCommonPresets` / `outfitEnablePresets` / `characterAI`）与
+`utils/settings/character/injectionTemplates.js` 的 `SYSTEM_INJECTION_TEMPLATES`（L29634–L29755）。
+
+`prompts/cot/characterFeaturePrompt.ts` 的提示词来自用户提供的 `人物生成.json`
+（SillyTavern 完成预设导出）中 `identifier="nsfw"` / `name="角色设计"` 的那一条；
+它是对上游 `characterAI.systemPrompt` 那句占位说明的替换，不是 st-chatu8 的资产。
+该文件不是上游代码，因此不受 AFPL 约束；在此登记只为说明「一键生成角色特征」
+的提示词来源与改动点（见文件头注释）。
 
 ### 1.2 各文件的修改声明
 
