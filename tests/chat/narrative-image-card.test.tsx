@@ -43,7 +43,7 @@ describe('卡片不再显示提示词与插入位置', () => {
     expect(screen.queryByText(/无提示词记录/)).not.toBeInTheDocument();
   });
 
-  it('「改提示词」仍可用，进入编辑后才出现输入框', () => {
+  it('「修改提示词」仍可用，进入编辑后才出现输入框', () => {
     render(
       <NarrativeImageCard
         image={建插图()}
@@ -51,7 +51,8 @@ describe('卡片不再显示提示词与插入位置', () => {
         onRegenerate={() => {}}
       />,
     );
-    fireEvent.click(screen.getByText('改提示词并重生'));
+    // 操作已收成图标按钮，名称走 aria-label（悬停提示里显示同一句）。
+    fireEvent.click(screen.getByRole('button', { name: '修改提示词' }));
     // 编辑态下提示词是输入框内容，这是它该出现的地方。
     // 卡片里有两个输入框（提示词 textarea 与尺寸 input），按值定位。
     const 提示词框 = screen.getAllByRole('textbox')
@@ -100,13 +101,13 @@ describe('生成中与失败态不受显示开关影响', () => {
       />,
     );
     expect(screen.getByText(/工作流校验失败/)).toBeInTheDocument();
-    expect(screen.getByText('重新生成')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '重新生成' })).toBeInTheDocument();
   });
 
   it('失败态点重新生成会回调', () => {
     const onRegenerate = vi.fn();
     render(<NarrativeImageCard image={建插图({ status: 'failed', error: 'x' })} onRegenerate={onRegenerate} />);
-    fireEvent.click(screen.getByText('重新生成'));
+    fireEvent.click(screen.getByRole('button', { name: '重新生成' }));
     expect(onRegenerate).toHaveBeenCalledWith(undefined);
   });
 });

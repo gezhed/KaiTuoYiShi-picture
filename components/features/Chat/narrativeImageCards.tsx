@@ -1,9 +1,12 @@
 import { useEffect, useState } from 'react';
+import { Check, ChevronDown, ChevronUp, Eraser, Eye, PenLine, RefreshCw, Wand2, X } from 'lucide-react';
 import type { 叙事插图 } from '@/models/chat';
 import type { 相册系统 } from '@/models/imageGeneration';
 import { 解析相册资源引用 } from '@/utils/albumActions';
 import { 取出提示词正文 } from '@/services/ai/imageGen/illustrationProtocol';
-import { smallClip, tinyClip } from './turnStyles';
+import { IconButton } from '@/components/ui/IconButton';
+import { ImageLightbox } from '@/components/features/ImageGeneration/ImageLightbox';
+import { smallClip } from './turnStyles';
 import type { 插图重生选项 } from './illustrationActions';
 
 const 常用尺寸 = ['960x1280', '1024x1024', '1280x720', '1216x832', '832x1216'];
@@ -14,6 +17,20 @@ function 解析尺寸文本(文本: string): { 宽度: number; 高度: number } 
   return { 宽度: Number(匹配[1]), 高度: Number(匹配[2]) };
 }
 
+/** 从提示词标记里取 `WxH`，给灯箱显示尺寸用。 */
+function 取尺寸文本(提示词: string): string {
+  const 匹配 = 提示词.match(/(\d{2,4})x(\d{2,4})/);
+  return 匹配 ? `${匹配[1]}x${匹配[2]}` : '';
+}
+
+/**
+ * 正文里的插图卡片。
+ *
+ * 操作全部收成图标 + 悬停说明：
+ *   查看大图 / 重新生成 / 修改提示词 / 换提示词。
+ * 之前同一件事在标题行和展开区各写了一遍文字按钮（「重新生成」与「原样重生」、
+ * 「改提示词」与「改提示词并重生」），既占正文空间又要读两遍才知道是同一个动作。
+ */
 export function NarrativeImageCard({
   image,
   album,
@@ -35,6 +52,7 @@ export function NarrativeImageCard({
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState('');
   const [sizeText, setSizeText] = useState('');
+  const [查看大图, set查看大图] = useState(false);
 
   // 用户在设置里改了「默认展开」时，已挂载的卡片也要跟着变，
   // 否则要刷新页面才生效（设置面板是覆盖层，卡片通常不会重新挂载）。
@@ -61,21 +79,48 @@ export function NarrativeImageCard({
     setEditing(false);
   };
 
-  const 小按钮 = (label: string, onClick: () => void, 禁用 = false) => (
-    <button
-      type="button"
-      onClick={onClick}
-      disabled={禁用}
-      className="px-2 py-1 font-serif text-[11px] tracking-[0.12em] transition-all hover:opacity-85 disabled:opacity-45"
-      style={{
-        color: 'rgba(var(--tj-btn-primary-start),0.95)',
-        background: 'rgba(var(--tj-btn-primary-start),0.06)',
-        border: '1px solid rgba(var(--tj-btn-primary-start), var(--tj-edge-tint))',
-        clipPath: tinyClip,
-      }}
-    >
-      {label}
-    </button>
+  /** 标题行右侧那一排图标：能做的动作都在这里，展开与否都能用。 */
+  const 操作图标 = () => (
+    <div className="flex shrink-0 items-center gap-1">
+      {imageSrc ? (
+        <IconButton
+          size="sm"
+          icon={Eye}
+          label="查看大图"
+          description="按原始比例完整查看，可下载"
+          onClick={() => set查看大图(true)}
+        />
+      ) : null}
+      {canRegenerate ? (
+        <IconButton
+          size="sm"
+          icon={RefreshCw}
+          label="重新生成"
+          description="按当前提示词再出一张"
+          onClick={() => onRegenerate?.(undefined)}
+        />
+      ) : null}
+      {canRegenerate ? (
+        <IconButton
+          size="sm"
+          icon={PenLine}
+          label="修改提示词"
+          description="改完只重出这一张"
+          active={editing}
+          pressed={editing}
+          onClick={打开编辑}
+        />
+      ) : null}
+      {onRerollPrompts && !regenerating ? (
+        <IconButton
+          size="sm"
+          icon={Wand2}
+          label="换提示词"
+          description="只让 LLM 重写提示词，保留已出的图"
+          onClick={onRerollPrompts}
+        />
+      ) : null}
+    </div>
   );
 
   if (image.status === 'generating') {
@@ -106,8 +151,7 @@ export function NarrativeImageCard({
       >
         <span>❌</span>
         <span className="min-w-0 flex-1 break-words">{typeLabel}生成失败{image.error ? `：${image.error}` : ''}</span>
-        {canRegenerate && 小按钮('重新生成', () => onRegenerate?.(undefined))}
-        {canRegenerate && 小按钮('改提示词', 打开编辑)}
+        {操作图标()}
       </div>
     );
   }
@@ -119,35 +163,34 @@ export function NarrativeImageCard({
         boxShadow: 'inset 0 0 0 1px rgba(var(--tj-btn-primary-start), 0.2)',
       }}
     >
-      <div className="flex items-center gap-2 px-3 py-2">
+      <div className="flex items-center gap-1.5 px-2 py-1.5">
         <button
           type="button"
           onClick={() => setExpanded((值) => !值)}
-          className="flex min-w-0 flex-1 items-center gap-2 text-left text-xs transition-all hover:opacity-80"
+          aria-expanded={expanded}
+          className="flex min-w-0 flex-1 items-center gap-1.5 text-left text-xs transition-all hover:opacity-80"
           style={{ color: 'rgba(var(--tj-text-primary), 0.85)' }}
         >
           <span>{icon}</span>
-          {/* 不再显示 `description`：那里存的是**正文锚点**（插入位置），
-              对用户是噪声 —— 他只想看图和操作按钮。 */}
+          {/* 不显示 `description`：那里存的是**正文锚点**（插入位置），对用户是噪声。 */}
           <span className="truncate font-medium">{typeLabel}</span>
-          <span style={{ color: 'rgba(var(--tj-text-secondary), 0.5)' }}>{expanded ? '▲' : '▼'}</span>
+          {expanded
+            ? <ChevronUp size={14} strokeWidth={2} aria-hidden="true" style={{ color: 'rgba(var(--tj-text-secondary), 0.6)' }} />
+            : <ChevronDown size={14} strokeWidth={2} aria-hidden="true" style={{ color: 'rgba(var(--tj-text-secondary), 0.6)' }} />}
         </button>
-        <div className="flex shrink-0 flex-wrap justify-end gap-1">
-          {canRegenerate && 小按钮('重新生成', () => onRegenerate?.(undefined))}
-          {canRegenerate && 小按钮('改提示词', 打开编辑)}
-          {onRerollPrompts && !regenerating && 小按钮('换提示词', onRerollPrompts)}
-        </div>
+        {操作图标()}
       </div>
 
       {expanded && (
-        <div className="space-y-2 px-3 pb-3">
+        <div className="space-y-2 px-2 pb-2">
           {imageSrc ? (
             /* 居中：卡片本身铺满正文宽度，而图片是 `max-w-full` 的定宽元素，
-               不加 `mx-auto` 就一律贴左（AVG 模式下特别明显）。 */
+               不加 `mx-auto` 就一律贴左（galgame 模式尤其明显）。点开看大图。 */
             <img
               src={imageSrc}
               alt={image.description || typeLabel}
-              className="mx-auto block max-w-full rounded"
+              onClick={() => set查看大图(true)}
+              className="mx-auto block max-w-full cursor-zoom-in rounded"
               style={{ maxHeight: '512px', objectFit: 'contain' }}
             />
           ) : (
@@ -167,10 +210,10 @@ export function NarrativeImageCard({
                 spellCheck={false}
                 onChange={(事件) => setDraft(事件.target.value)}
               />
-              <div className="flex flex-wrap items-center gap-2">
+              <div className="flex flex-wrap items-center gap-1.5">
                 <span className="text-[11px]" style={{ color: 'rgba(var(--tj-text-secondary), 0.72)' }}>尺寸</span>
                 <input
-                  className="kaituo-input w-28 px-2 py-1 text-xs font-mono"
+                  className="kaituo-input w-24 px-2 py-0.5 text-[11px] font-mono"
                   value={sizeText}
                   placeholder="1024x1024"
                   onChange={(事件) => setSizeText(事件.target.value)}
@@ -180,23 +223,38 @@ export function NarrativeImageCard({
                     key={尺寸}
                     type="button"
                     onClick={() => setSizeText(尺寸)}
-                    className="px-2 py-0.5 text-[11px] font-mono transition-all hover:opacity-80"
+                    className="px-1.5 py-0.5 text-[11px] font-mono transition-all hover:opacity-80"
                     style={{
                       color: sizeText === 尺寸 ? 'rgb(var(--tj-on-accent))' : 'rgba(var(--tj-text-primary), 0.8)',
                       background: sizeText === 尺寸 ? 'rgb(var(--tj-accent-primary))' : 'rgba(var(--tj-ui-panel-strong), 0.5)',
                       border: '1px solid rgba(var(--tj-accent-primary), var(--tj-edge-tint-weak))',
-                      // 与卡片里的其它小按钮一致：带切角，而不是直角方块。
-                      clipPath: tinyClip,
+                      clipPath: smallClip,
                     }}
                   >
                     {尺寸}
                   </button>
                 ))}
               </div>
-              <div className="flex flex-wrap gap-2">
-                {小按钮('重新生成本张', 提交编辑, regenerating)}
-                {小按钮('取消', () => setEditing(false))}
-                {sizeText ? 小按钮('清除尺寸', () => setSizeText('')) : null}
+              <div className="flex items-center gap-1.5">
+                <IconButton
+                  size="sm"
+                  icon={Check}
+                  label="重新生成本张"
+                  description="用编辑后的提示词重出这一张"
+                  disabled={regenerating}
+                  disabledReason="正在生成中"
+                  onClick={提交编辑}
+                />
+                <IconButton size="sm" icon={X} label="取消修改" description="不改了" onClick={() => setEditing(false)} />
+                {sizeText ? (
+                  <IconButton
+                    size="sm"
+                    icon={Eraser}
+                    label="清除尺寸"
+                    description="回到跟随渠道的默认尺寸"
+                    onClick={() => setSizeText('')}
+                  />
+                ) : null}
               </div>
               {sizeText && !解析尺寸文本(sizeText) ? (
                 <div className="text-[11px]" style={{ color: 'rgb(var(--tj-danger))' }}>
@@ -204,16 +262,24 @@ export function NarrativeImageCard({
                 </div>
               ) : null}
             </div>
-          ) : (
-            /* 提示词文本只在「改提示词」时出现（那时它是输入框内容）。
-               平时不铺在卡片上，避免正文被大段 tag 占满。 */
-            <div className="flex flex-wrap gap-2">
-              {canRegenerate && 小按钮('改提示词并重生', 打开编辑)}
-              {canRegenerate && 小按钮('原样重生', () => onRegenerate?.(undefined))}
-            </div>
-          )}
+          ) : null}
         </div>
       )}
+
+      <ImageLightbox
+        项={查看大图 && imageSrc
+          ? {
+            id: image.id,
+            src: imageSrc,
+            title: image.description || typeLabel,
+            prompt: 取出提示词正文(image.prompt),
+            negativePrompt: image.negativePrompt,
+            dimensions: 取尺寸文本(image.prompt),
+            note: '正文插图',
+          }
+          : null}
+        onClose={() => set查看大图(false)}
+      />
     </div>
   );
 }
@@ -274,4 +340,3 @@ export function NarrativeImageManualCard({
     </div>
   );
 }
-
