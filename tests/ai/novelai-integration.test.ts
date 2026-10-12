@@ -17,6 +17,7 @@ import { 安装假NovelAI, 卸载假NovelAI } from './helpers/fakeNovelAI';
 import { 生成单张插图 } from '@/services/ai/imageGen/generateIllustration';
 import { 设置参考图解码超时 } from '@/services/ai/imageGen/novelaiReference';
 import { 创建默认文生图系统设置 } from '@/models/genSystem';
+import { 清空图片缓存, 统计图片缓存, 列出缓存图片 } from '@/services/imageCache';
 import type { 角色卡, 文生图系统设置 } from '@/models/genSystem';
 
 // jsdom 没有真实图片解码器，参考图缩放会走超时分支。把预算压到 20ms，
@@ -113,15 +114,25 @@ describe('NovelAI 出图链路（假服务端）', () => {
     expect(结果.结果.高度).toBe(1024);
   });
 
-  it('开启图片缓存时会对数据地址再取一次字节写入缓存', async () => {
+  it('开启图片缓存时把字节写进缓存，且不再多取一次字节', async () => {
+    await 清空图片缓存();
     const 记录 = 安装假NovelAI({ zip: true });
     const 设置 = 建设置();
     设置.图片缓存.启用 = true;
     await 生成单张插图(设置, { 提示词标记: 'image###1girl###' }, 上下文);
-    // 第一次是出图端点，第二次是缓存写入时读数据地址。
-    expect(记录.请求地址).toHaveLength(2);
+    /*
+     * 只应有出图那一次请求：data URL 由本地解码，不再 `fetch(数据地址)`。
+     * 那次 fetch 归 `connect-src` 管，宿主下发 CSP 时会被拒，而异常又被空 catch
+     * 吞掉 —— 用户看到的就是「图片缓存里永远没有图」。
+     */
+    expect(记录.请求地址).toHaveLength(1);
     expect(记录.请求地址[0]).toContain('image.novelai.net');
-    expect(记录.请求地址[1].startsWith('data:image')).toBe(true);
+    const [统计, 列表] = await Promise.all([统计图片缓存(), 列出缓存图片()]);
+    expect(统计.图片数).toBe(1);
+    expect(列表[0].条目.prompt).toContain('1girl');
+    // 用记录上的 size 而不是 blob.size：jsdom 的 Blob 经 fake-indexeddb 的结构化
+    // 克隆回来会丢 Blob 原型（真实浏览器不会），这里只验字节确实写进去了。
+    expect(统计.总字节).toBeGreaterThan(0);
   });
 
   it('载荷带齐 NovelAI 要求的字段族', async () => {

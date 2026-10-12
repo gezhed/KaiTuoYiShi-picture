@@ -46,11 +46,12 @@ import {
 } from './novelaiReference';
 import { 取Vibe条目, 解析Vibe条目数据, 构造Vibe载荷 } from './novelaiVibe';
 import { 读取角色媒体数据地址 } from '@/services/characterMedia';
-import { devLog } from '@/utils/devLog';
+import { devLog, devLogError } from '@/utils/devLog';
 import { 构造SD载荷, 请求SD图片 } from './sdClient';
 import { 构造Banana载荷, 请求Banana图片 } from './bananaClient';
 import type { 生成结果 } from './types';
 import { blob转数据地址 } from '@/utils/blobEncoding';
+import { dataUrlToBlob } from '@/utils/albumObjectUrl';
 
 export interface 出图请求 {
   /** 插图记录里的提示词标记（含标记外壳）。 */
@@ -223,19 +224,42 @@ export async function 生成单张插图(
 
   if (请求.写缓存 !== false && 设置.图片缓存.启用) {
     try {
-      const blob = await (await fetch(结果.数据地址)).blob();
+      const blob = await 取图片字节(结果.数据地址);
       await 追加缓存图片(请求.提示词标记, blob, {
         mimeType: 结果.mimeType,
         width: 结果.宽度,
         height: 结果.高度,
         genParams: 生成参数,
       });
-    } catch {
-      // 缓存写入失败不该让已经出好的图丢失；界面仍能显示本次结果。
+    } catch (错误) {
+      // 缓存写入失败不该让已经出好的图丢失；但**必须留下日志** ——
+      // 这里原来是空 catch，于是「图片缓存里一张图都没有」完全查不出原因。
+      devLogError('net', 'image-cache-write-failed', 错误, { 提示词: 请求.提示词标记.slice(0, 32) });
     }
   }
 
   return { 结果, 正向提示词: 组装.正向提示词, 负向提示词: 组装.负向提示词, 生成参数 };
+}
+
+/**
+ * 取图片字节。
+ *
+ * 原来直接 `fetch(数据地址)`：出图结果基本都是 `data:` 地址，而 data URL 也归
+ * `connect-src` 管——宿主一旦下发 CSP，这次 fetch 会被直接拒绝，异常又被上层空
+ * catch 吞掉，现象就是「图片缓存永远没有图」。改成 data URL 直接解码（不经过网络
+ * 层），只有 `blob:` / `http(s):` 这类地址才退回 fetch。
+ */
+async function 取图片字节(数据地址: string): Promise<Blob> {
+  const 地址 = (数据地址 ?? '').trim();
+  if (地址.startsWith('data:')) {
+    const blob = dataUrlToBlob(地址);
+    if (blob) return blob;
+  }
+  const 响应 = await fetch(地址);
+  if (!响应.ok) throw new Error(`读取出图结果失败：HTTP ${响应.status}`);
+  const blob = await 响应.blob();
+  if (!blob.size) throw new Error('读取出图结果失败：内容为空。');
+  return blob;
 }
 
 /** 把编辑过的提示词写回标记外壳，供「修改后重新生成」使用。 */

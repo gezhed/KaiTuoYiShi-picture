@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import type { ComfyUI档案, 游戏设置 } from '@/models/settings';
 import type { Comfy可选资源 } from '@/services/ai/imageGen/comfyClient';
 import { 未选择模型 } from '@/services/ai/imageGen/comfyEngine';
@@ -219,6 +219,13 @@ export function ComfyUISettingsConsole({
       set保存提示({ kind: 'error', text: `读取缓存失败：${错误 instanceof Error ? 错误.message : String(错误)}` });
     }
   };
+
+  // 进「图片缓存」页就先读一次容量：不点按钮时页面一片空白，很容易被当成「缓存坏了」。
+  useEffect(() => {
+    if (当前页 !== 'cache') return;
+    void 处理缓存统计();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [当前页]);
 
   const 工作流提示 = (() => {
     const 文本 = 档案?.工作流Json?.trim() ?? '';
@@ -1084,7 +1091,10 @@ export function ComfyUISettingsConsole({
       )}
 
       {当前页 === 'cache' && (
-        <面板 title="图片缓存" desc="按提示词归档；同一提示词的多次生成形成一条有序图廊。">
+        <面板
+          title="图片缓存"
+          desc="按提示词归档；同一提示词的多次生成形成一条有序图廊。看图与删单张在「图片生成 → 图片缓存」页。"
+        >
           <div className="flex flex-wrap gap-2">
             <次级按钮 onClick={() => void 处理缓存统计()}>统计容量</次级按钮>
             <次级按钮

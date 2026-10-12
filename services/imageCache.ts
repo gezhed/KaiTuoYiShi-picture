@@ -92,7 +92,7 @@ export async function 读取缓存条目(键: string): Promise<图片缓存条�
 export async function 追加缓存图片(
   提示词: string,
   图片: Blob,
-  元数据: { mimeType?: string; width?: number; height?: number; genParams?: 生成参数快照 },
+  元数据: { mimeType?: string; width?: number; height?: number; genParams?: 生成参数快照 } = {},
 ): Promise<{ 条目: 图片缓存条目; 图片: 缓存图片 }> {
   const 键 = 计算缓存键(提示词);
   const db = await 打开图片缓存库();
@@ -189,6 +189,48 @@ export interface 缓存统计 {
   条目数: number;
   图片数: number;
   总字节: number;
+}
+
+export interface 缓存图片项 {
+  条目: 图片缓存条目;
+  图片: 缓存图片;
+  blob: Blob;
+}
+
+/**
+ * 列出缓存里的图片，**新的在前**。
+ *
+ * 上游对应 `getAllImageBlobs`（图廊页把「提示词条目」摊平成一张图片表）。
+ * 本应用此前只实现了写入侧：`追加缓存图片` 一直在正常落库（统计里的张数能看到），
+ * 但**没有任何读取入口** —— 图廊那格永远是空的，用户看到的就是
+ * 「图片缓存里没有图片，新生成的也不显示」。
+ *
+ * 顺序：条目之间按图片 `createdAt` 倒序（最近生成的排最前）；
+ * 同一提示词的多张按生成顺序落在相邻位置。
+ */
+export async function 列出缓存图片(限制 = 200): Promise<缓存图片项[]> {
+  const db = await 打开图片缓存库();
+  const 事务 = db.transaction([缓存条目表, 缓存图片表], 'readonly');
+  const 条目列表 = await 包装<图片缓存条目[]>(事务.objectStore(缓存条目表).getAll());
+  const 图片列表 = await 包装<Array<缓存图片 & { blob?: Blob }>>(事务.objectStore(缓存图片表).getAll());
+  const 条目表 = new Map(条目列表.map((项) => [项.id, 项]));
+
+  return 图片列表
+    // 没有字节的记录（清理中断、旧版本残留）不展示，否则图廊里会出现永远加载不出的格子。
+    .filter((项): 项 is 缓存图片 & { blob: Blob } => Boolean(项.blob))
+    .sort((甲, 乙) => 乙.createdAt - 甲.createdAt)
+    .slice(0, Math.max(1, Math.trunc(限制)))
+    .map((项) => {
+      const { blob, ...记录 } = 项;
+      const 条目 = 条目表.get(记录.entryId) ?? {
+        id: 记录.entryId,
+        prompt: '',
+        imageIds: [],
+        createdAt: 记录.createdAt,
+        updatedAt: 记录.createdAt,
+      };
+      return { 条目, 图片: 记录, blob };
+    });
 }
 
 export async function 统计图片缓存(): Promise<缓存统计> {

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { 相册系统 } from '@/models/imageGeneration';
 import type { 角色数据结构 } from '@/models/character';
 import type { NPC记录 } from '@/models/npc';
@@ -6,7 +6,7 @@ import type { 游戏设置 } from '@/models/settings';
 import type { UseGameStateReturn } from '@/hooks/useGameState';
 import { 创建相册图片条目, 添加图片到相册, 解析相册资源引用, 创建相册资源引用 } from '@/utils/albumActions';
 import { 卸载槽位图片, 槽位键转目标, 旅人槽位选项, 绑定NPC槽位选项, type 头像槽位选项 } from '@/utils/avatarActions';
-import { 统计图片缓存, 清空图片缓存, 清理过期缓存 } from '@/services/imageCache';
+import { 统计图片缓存, 清空图片缓存, 清理过期缓存, 列出缓存图片, 删除缓存图片 } from '@/services/imageCache';
 import { 生成单张插图, 重写提示词标记 } from '@/services/ai/imageGen/generateIllustration';
 import type { 角色匹配上下文 } from '@/services/ai/imageGen/characterPrompt';
 import { 主按钮, 面板, 提示条, 次级按钮, 页签条, 设置字段 as 字段 } from '@/components/features/Settings/settingsPrimitives';
@@ -16,6 +16,8 @@ import { SlotApplyDialog } from './SlotApplyDialog';
 import { GalleryWorkspace, type 图库条目选中 } from '@/components/features/GameSystems/album/GalleryWorkspace';
 import { buildAssetMap, buildCharacterLibraryRecords } from '@/components/features/GameSystems/album/galleryWorkspaceLogic';
 import { cardClip } from '@/components/ui/clipPaths';
+import { IconButton } from '@/components/ui/IconButton';
+import { RefreshCw, Trash2 } from 'lucide-react';
 
 export type 工作台页签 = 'gallery' | 'manual' | 'avatars' | 'cache';
 
@@ -63,7 +65,21 @@ export function ImageWorkbenchPanel({
   /** 正在查看的图库下标；null 表示查看器关闭。 */
   const [查看下标, set查看下标] = useState<number | null>(null);
   const [缓存统计, set缓存统计] = useState<{ 条目数: number; 图片数: number; 总字节: number } | null>(null);
-  const [缓存预览, set缓存预览] = useState<Array<{ id: string; url: string; prompt: string }>>([]);
+  const [缓存预览, set缓存预览] = useState<Array<{
+    id: string;
+    url: string;
+    prompt: string;
+    createdAt: number;
+    size: number;
+    dimensions?: string;
+  }>>([]);
+  /** 加载中／失败要让用户看得见，否则「缓存里没有图」和「还没加载」长得一样。 */
+  const [缓存加载中, set缓存加载中] = useState(true);
+  const [缓存出错, set缓存出错] = useState('');
+  /** 缓存图的查看器下标；与图库那个分开，避免两处互相顶掉。 */
+  const [查看缓存下标, set查看缓存下标] = useState<number | null>(null);
+  /** 当前这批缩略图的 objectURL，刷新与卸载时统一回收。 */
+  const 缓存地址表 = useRef<string[]>([]);
   /** 图库里点「设置到槽位」时选中的那张图。 */
   const [待应用, set待应用] = useState<图库条目选中 | null>(null);
   /** 头像编辑器打开时对应的角色槽位选项。 */
@@ -83,15 +99,52 @@ export function ImageWorkbenchPanel({
     [album],
   );
 
-  useEffect(() => {
-    void (async () => {
-      try {
-        set缓存统计(await 统计图片缓存());
-      } catch {
-        set缓存统计(null);
-      }
-    })();
+  /*
+   * 图片缓存必须**真的把图列出来**。
+   *
+   * 之前这里只取了一个计数，图廊那格的 state（缓存预览）从头到尾没人写过，
+   * 于是无论缓存里有多少张，页面永远是空的 —— 用户看到的就是
+   * 「我的图片缓存没有图片了，新生成的也不显示」。
+   */
+  const 刷新缓存 = useCallback(async () => {
+    set缓存加载中(true);
+    // 关闭缓存图的查看器：它用的就是下面这批 objectURL，回收后图会裂。
+    set查看缓存下标(null);
+    try {
+      const [统计, 列表] = await Promise.all([统计图片缓存(), 列出缓存图片()]);
+      set缓存统计(统计);
+      // 先回收上一批，避免反复刷新把 objectURL 攒在内存里。
+      for (const 地址 of 缓存地址表.current) URL.revokeObjectURL(地址);
+      缓存地址表.current = [];
+      set缓存预览(列表.map(({ 条目, 图片, blob }) => {
+        const url = URL.createObjectURL(blob);
+        缓存地址表.current.push(url);
+        return {
+          id: 图片.id,
+          url,
+          prompt: 条目.prompt || '（无提示词记录）',
+          createdAt: 图片.createdAt,
+          size: 图片.size ?? blob.size,
+          dimensions: 图片.width && 图片.height ? `${图片.width}x${图片.height}` : undefined,
+        };
+      }));
+      set缓存出错('');
+    } catch (错误) {
+      set缓存统计(null);
+      set缓存预览([]);
+      set缓存出错(错误 instanceof Error ? 错误.message : String(错误));
+    } finally {
+      set缓存加载中(false);
+    }
   }, []);
+
+  useEffect(() => {
+    void 刷新缓存();
+    return () => {
+      for (const 地址 of 缓存地址表.current) URL.revokeObjectURL(地址);
+      缓存地址表.current = [];
+    };
+  }, [刷新缓存]);
 
   // 过期清理只在面板打开时做一次，避免每回合都扫全库。
   useEffect(() => {
@@ -144,7 +197,8 @@ export function ImageWorkbenchPanel({
       });
       onAlbumChange(添加图片到相册(album, 条目));
       set提示({ kind: 'ok', text: `生成完成：${结果.结果.宽度}x${结果.结果.高度}，种子 ${结果.结果.种子}。` });
-      set缓存统计(await 统计图片缓存().catch(() => null));
+      // 新图已写入缓存：立刻重列，用户能当场看到它出现在「图片缓存」里。
+      await 刷新缓存();
     } catch (错误) {
       const 原文 = 错误 instanceof Error ? 错误.message : String(错误);
       // 未启用是最常见的失败原因，但它不该是一句死路——直接给出该去哪一步。
@@ -163,9 +217,17 @@ export function ImageWorkbenchPanel({
 
   const 处理清空缓存 = async () => {
     await 清空图片缓存();
-    set缓存预览([]);
-    set缓存统计(await 统计图片缓存().catch(() => null));
+    await 刷新缓存();
+    set查看缓存下标(null);
     set提示({ kind: 'ok', text: '图片缓存已清空。' });
+  };
+
+  /** 删掉缓存里的单张图（同一条目下其余张保留）。 */
+  const 处理删除缓存图片 = async (图片Id: string) => {
+    await 删除缓存图片(图片Id);
+    await 刷新缓存();
+    set查看缓存下标(null);
+    set提示({ kind: 'ok', text: '已从图片缓存里删除这一张。' });
   };
 
   /** 打开某个角色的头像编辑器：旅人与伙伴各一套槽位。 */
@@ -286,26 +348,58 @@ export function ImageWorkbenchPanel({
       )}
 
       {当前页 === 'cache' && (
-        <面板 title="图片缓存" desc="条目以提示词为键，同一提示词的多次生成累积成一条有序图廊。">
-          <div className="flex flex-wrap gap-2">
-            <次级按钮 onClick={() => void (async () => {
-              set缓存统计(await 统计图片缓存().catch(() => null));
-            })()}>统计容量</次级按钮>
+        <面板 title="图片缓存" desc="条目以提示词为键，同一提示词的多次生成累积成一条有序图廊。点图可放大、下载或删掉这一张。">
+          <div className="flex flex-wrap items-center gap-2">
+            <IconButton icon={RefreshCw} label="刷新缓存" description="重新读取缓存里的图片与容量" onClick={() => void 刷新缓存()} />
             <次级按钮 onClick={() => void 处理清空缓存()}>清空缓存</次级按钮>
+            {缓存统计 ? (
+              <提示条
+                kind="info"
+                text={`条目 ${缓存统计.条目数} 条 · 图片 ${缓存统计.图片数} 张 · 占用 ${格式化字节(缓存统计.总字节)}`}
+              />
+            ) : null}
           </div>
-          {缓存统计 ? (
+          {缓存出错 ? <提示条 kind="error" text={`读取图片缓存失败：${缓存出错}`} /> : null}
+          {缓存加载中 ? (
+            <div className="text-xs" style={{ color: 'rgba(var(--tj-text-secondary), 0.7)' }}>正在读取图片缓存…</div>
+          ) : null}
+          {!缓存加载中 && !缓存出错 && 缓存预览.length === 0 ? (
             <提示条
               kind="info"
-              text={`条目 ${缓存统计.条目数} 条 · 图片 ${缓存统计.图片数} 张 · 占用 ${格式化字节(缓存统计.总字节)}`}
+              text={缓存统计?.图片数
+                ? `缓存里有 ${缓存统计.图片数} 张图，但都读不出字节（可能已损坏）。可以清空后重新生成。`
+                : '缓存里还没有图片。开启「总览 → 图片缓存」后，每次出图都会按提示词归档到这里；也可以在「手动出图」页生成一张。'}
             />
           ) : null}
           {缓存预览.length > 0 ? (
             <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4">
-              {缓存预览.map((项) => (
-                <figure key={项.id} style={{ border: '1px solid rgba(var(--tj-accent-primary), var(--tj-edge-tint-weak))' }}>
-                  <img src={项.url} alt={项.prompt} className="h-28 w-full object-cover" loading="lazy" />
+              {缓存预览.map((项, 序号) => (
+                <figure
+                  key={项.id}
+                  className="group relative"
+                  style={{ border: '1px solid rgba(var(--tj-accent-primary), var(--tj-edge-tint-weak))' }}
+                >
+                  <img
+                    src={项.url}
+                    alt={项.prompt}
+                    loading="lazy"
+                    onClick={() => set查看缓存下标(序号)}
+                    className="h-28 w-full cursor-zoom-in object-cover"
+                  />
+                  <div className="absolute right-1 top-1 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
+                    <IconButton
+                      size="sm"
+                      icon={Trash2}
+                      label="删除这一张"
+                      description="只删缓存里的这张，不影响图库与正文插图"
+                      onClick={() => void 处理删除缓存图片(项.id)}
+                    />
+                  </div>
                   <figcaption className="px-2 py-1 text-[11px] leading-tight" style={{ color: 'rgba(var(--tj-text-secondary), 0.8)' }}>
-                    {项.prompt}
+                    <span className="line-clamp-2 block break-words">{项.prompt}</span>
+                    <span className="mt-0.5 block font-mono opacity-70">
+                      {项.dimensions ? `${项.dimensions} · ` : ''}{格式化字节(项.size)} · {new Date(项.createdAt).toLocaleString()}
+                    </span>
                   </figcaption>
                 </figure>
               ))}
@@ -342,6 +436,23 @@ export function ImageWorkbenchPanel({
         onClose={() => set查看下标(null)}
         onPrev={查看下标 !== null && 查看下标 > 0 ? () => set查看下标(查看下标 - 1) : null}
         onNext={查看下标 !== null && 查看下标 < 归档图.length - 1 ? () => set查看下标(查看下标 + 1) : null}
+      />
+
+      <ImageLightbox
+        项={查看缓存下标 === null ? null : (缓存预览[查看缓存下标]
+          ? {
+            id: 缓存预览[查看缓存下标].id,
+            src: 缓存预览[查看缓存下标].url,
+            title: '图片缓存',
+            prompt: 缓存预览[查看缓存下标].prompt,
+            dimensions: 缓存预览[查看缓存下标].dimensions,
+            note: `${格式化字节(缓存预览[查看缓存下标].size)} · ${new Date(缓存预览[查看缓存下标].createdAt).toLocaleString()}`,
+            createdAt: 缓存预览[查看缓存下标].createdAt,
+          }
+          : null)}
+        onClose={() => set查看缓存下标(null)}
+        onPrev={查看缓存下标 !== null && 查看缓存下标 > 0 ? () => set查看缓存下标(查看缓存下标 - 1) : null}
+        onNext={查看缓存下标 !== null && 查看缓存下标 < 缓存预览.length - 1 ? () => set查看缓存下标(查看缓存下标 + 1) : null}
       />
     </div>
   );
