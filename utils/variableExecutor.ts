@@ -137,7 +137,7 @@ export function reduceVariableCommands(
     }
 
     if (root === '世界' && rest === '当前时间' && cmd.action === 'set') {
-      cursor = 补齐疑似跨夜时间(cursor, { action: 'set', key: rawCmd.key, value: cmd.value });
+      cursor = 补齐疑似跨夜时间(cursor, { action: 'set', key: rawCmd.key, value: cmd.value }, initialState.世界 as 世界状态);
     }
 
     if (root === '旅人' && rest === '背包' && cmd.action === 'push' && !解析获取物品输入(cmd.value)) {
@@ -311,9 +311,13 @@ function 归一化变量世界状态(state: VariableState): VariableState {
   };
 }
 
-function 补齐疑似跨夜时间(state: VariableState, cmd: 变量命令): VariableState {
+function 补齐疑似跨夜时间(state: VariableState, cmd: 变量命令, baselineWorld?: 世界状态): VariableState {
   const world = state.世界 as 世界状态 | undefined;
   if (!world) return state;
+  // 同批已推进过日期（如 time 事实已写入 世界.当前日期）时不再补一天，避免把一次跨夜算成两天。
+  const currentDate = 解析琥珀日期序数(world.当前日期);
+  const baselineDate = 解析琥珀日期序数(baselineWorld?.当前日期);
+  if (currentDate !== null && baselineDate !== null && currentDate > baselineDate) return state;
   const current = 解析分钟序数(world.当前时间);
   const next = 解析分钟序数(cmd.value);
   if (current === null || next === null) return state;
@@ -457,8 +461,8 @@ function 校验世界时间命令(
       if (dateWillAdvanceInBatch) return { reason: null };
       return { reason: `已忽略疑似时间回退：同一日期内 世界.当前时间 不能早于当前时间（当前 ${currentWorld.当前时间 || '未知'}，尝试写入 ${String(value)}）；若剧情已跨日，请同批写入 世界.当前日期 的下一天` };
     }
-    if (!dateAlreadyAdvanced && !dateWillAdvanceInBatch && baselineTime !== null && next - baselineTime > 60) {
-      const capped = Math.min(23 * 60 + 59, baselineTime + 30);
+    if (!dateAlreadyAdvanced && !dateWillAdvanceInBatch && baselineTime !== null && next - baselineTime > 12 * 60) {
+      const capped = Math.min(23 * 60 + 59, baselineTime + 12 * 60);
       return { reason: null, correctedValue: 格式化分钟序数(capped) };
     }
     return { reason: null };

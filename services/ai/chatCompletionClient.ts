@@ -3,7 +3,7 @@ import type { DeepSeekAttemptDiagnostics } from './deepSeekRecovery';
 import type { API配置项 } from '@/models/settings';
 import { completionClaudeNonStream, streamClaude } from './chatCompletionClaude';
 import { streamGemini } from './chatCompletionGemini';
-import { buildOpenAICompatibleTransport, errorText, fetchWithApiErrorReport, formatOpenAICompatibleError, streamOpenAICompatible, throwApiError } from './chatCompletionOpenAICompat';
+import { buildOpenAICompatibleTransport, errorText, fetchWithApiErrorReport, formatOpenAICompatibleError, readJsonResponseBody, streamOpenAICompatible, throwApiError } from './chatCompletionOpenAICompat';
 import { completionOpenCodeNonStream, streamOpenCode } from './chatCompletionOpenCode';
 import { buildMessages, detectProvider, isDeepSeekPrefixUnsupportedError, mergePrefixResult, stripDeepSeekPrefixMessages, withPrefixMessages } from './chatCompletionProvider';
 import { parseOpenAICompatibleTextResponse, reportOpenAICompatibleDiagnostics } from './chatCompletionStream';
@@ -193,7 +193,7 @@ async function chatCompletionNonStreamOnce(
       (status, responseText) => formatOpenAICompatibleError(deepSeekPayload.config, status, responseText));
   }
 
-  const json = await response.json();
+  const json = await readJsonResponseBody(response, deepSeekPayload.config, transport.upstreamUrl, '非流式补全');
   emitUsageFromResponse(json, deepSeekPayload.config, request);
   const text = parseOpenAICompatibleTextResponse(json);
   reportOpenAICompatibleDiagnostics(json, text, deepSeekPayload.config, request);

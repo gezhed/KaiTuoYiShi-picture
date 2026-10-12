@@ -62,6 +62,8 @@ export function autoAlignCanonStoryProgress(params: {
   declaredAdvance?: { completed: boolean; targetSegment?: string } | null;
   /** 只参与「本段结束状态」命中：不参与分段存在性评分，阻断词仍只看正文。 */
   factEvidence?: string[] | null;
+  /** 权威目标的向前窗口（组号跨度）；巡检调用可放宽以追赶漂移，默认 6。 */
+  advanceWindow?: number;
 }): { system: 剧情编织系统; changed: boolean; progressed: boolean } {
   const normalized = 归一化剧情编织系统(params.storyWeaving);
   const series = 获取激活剧情系列(normalized);
@@ -123,6 +125,30 @@ export function autoAlignCanonStoryProgress(params: {
       gateSnapshot: params.gateSnapshot,
     });
     return { system: nextSystem, changed: true, progressed: true };
+  }
+
+  // 申报/判定是语义推进信号：命中后续分段时直接采信，不再要求关键词字面匹配——玩家以不同路径抵达后续剧情也应被承认。
+  const authoritativeTarget = resolveAuthoritativeAdvanceTarget(series, current, params.advanceJudge, params.declaredAdvance, params.advanceWindow);
+  if (authoritativeTarget) {
+    const judgeCompleted = Boolean(params.advanceJudge?.completed);
+    const declaredCompleted = Boolean(params.declaredAdvance?.completed);
+    const completed = judgeCompleted || declaredCompleted
+      || scoreCompletionSignals(current, source, judgeCompleted, declaredCompleted, params.factEvidence ?? []).explicitEnding;
+    const alignedSystem = alignToLaterSegment({
+      normalized,
+      series,
+      current,
+      target: authoritativeTarget,
+      turnCount: params.turnCount,
+      reasons: [
+        `推进信号命中后续分段「${authoritativeTarget.标题}」（申报/判定驱动，不依赖关键词字面匹配）`,
+        params.declaredAdvance?.targetSegment ? `模型申报进入：${params.declaredAdvance.targetSegment}` : '',
+        params.advanceJudge?.actualSegmentId ? '独立判定给出了实际所在分段' : '',
+      ].filter(Boolean),
+      currentArchiveStatus: completed ? '已经历' : '已跳过',
+      gateSnapshot: params.gateSnapshot,
+    });
+    return { system: alignedSystem, changed: true, progressed: true };
   }
 
   const candidates = segments.filter((segment) =>
@@ -762,6 +788,37 @@ function scoreCompletionSignals(segment: 剧情编织分段, text: string, judge
   }
   if (!explicitEnding) reasons.push('缺少明确结束状态或标题+收束词组合，暂不自动归档');
   return { value, explicitEnding, reasons, blockers };
+}
+
+/**
+ * 申报/判定这类语义信号命中后续分段时，直接采信为推进目标，不再要求关键词字面匹配。
+ * 限制在已验证、可注入、且组号在 (current, current+6] 的后续分段，避免误报导致无限大跳。
+ */
+function resolveAuthoritativeAdvanceTarget(
+  series: 剧情编织系列,
+  current: 剧情编织分段,
+  judge: StoryAdvanceJudgement | null | undefined,
+  declared: { completed: boolean; targetSegment?: string } | null | undefined,
+  maxWindow = 6,
+): 剧情编织分段 | null {
+  const declaredRaw = (declared?.targetSegment ?? '').trim();
+  const judgeId = (judge?.actualSegmentId ?? '').trim();
+  if (!declaredRaw && !judgeId) return null;
+  const isValid = (segment: 剧情编织分段): boolean =>
+    segment.启用注入
+    && segment.处理状态 === '已完成'
+    && segment.组号 > current.组号
+    && segment.组号 <= current.组号 + maxWindow;
+  if (judgeId) {
+    const byJudge = series.分段列表.find((segment) => isValid(segment) && segment.id === judgeId);
+    if (byJudge) return byJudge;
+  }
+  if (declaredRaw && declaredRaw !== '无' && declaredRaw !== '没有' && declaredRaw !== '未进入') {
+    return series.分段列表.find((segment) =>
+      isValid(segment) && (segment.标题 === declaredRaw || String(segment.组号) === declaredRaw),
+    ) ?? null;
+  }
+  return null;
 }
 
 function resolveDeclaredTargetId(

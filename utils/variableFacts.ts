@@ -472,10 +472,6 @@ function 格式化分钟(total: number): string {
   return `${Math.floor(safe / 60).toString().padStart(2, '0')}:${(safe % 60).toString().padStart(2, '0')}`;
 }
 
-function 有跨日证据(text: string | undefined): boolean {
-  return Boolean(text && /次日|第二天|翌日|隔天|跨日|跨夜|过夜|一夜|睡醒|醒来|凌晨|清晨/.test(text));
-}
-
 function npcIdFromName(name: string): string {
   const canonical = matchCanonical(name);
   const map: Record<string, string> = {
@@ -685,9 +681,21 @@ export function factsToVariableCommands(
       const current = 分钟序数(world.当前时间);
       if (fact.mode === 'no_change') continue;
       if (fact.mode === 'elapsed') {
-        const delta = Math.max(1, Math.min(30, Math.trunc(fact.minutes ?? 3)));
-        if (current !== null) push({ action: 'set', key: '世界.当前时间', value: 格式化分钟(current + delta) });
-        else warnings.push('time(elapsed) 已忽略：当前时间不是 HH:mm，无法计算推进。');
+        if (current === null) {
+          warnings.push('time(elapsed) 已忽略：当前时间不是 HH:mm，无法计算推进。');
+          continue;
+        }
+        // 不再把长耗时静默截成 30 分钟：按声明时长推进，跨过整天时同步推进日期与开拓天数。
+        const delta = Math.max(1, Math.min(12 * 60, Math.trunc(fact.minutes ?? 3)));
+        const total = current + delta;
+        const dayCarry = Math.floor(total / 1440);
+        if (dayCarry > 0) {
+          const nextDate = 推进琥珀日期(world.当前日期, dayCarry);
+          const aligned = 对齐世界日期与天数(world.开拓天数 + dayCarry, nextDate);
+          push({ action: 'set', key: '世界.开拓天数', value: aligned.开拓天数 });
+          push({ action: 'set', key: '世界.当前日期', value: aligned.当前日期 });
+        }
+        push({ action: 'set', key: '世界.当前时间', value: 格式化分钟(total) });
         continue;
       }
       if (fact.mode === 'set_time') {
@@ -696,16 +704,13 @@ export function factsToVariableCommands(
           warnings.push(`time(set_time) 已忽略：无法识别目标时间 ${fact.targetTime ?? '空'}。`);
           continue;
         }
-        if (current !== null && next < current && 有跨日证据(fact.evidence)) {
+        // 时间是单向的：目标钟点早于当前时，只可能是跨日，直接推进一天（不再要求关键词证据、也不再静默丢弃）。
+        if (current !== null && next < current) {
           const nextDate = 推进琥珀日期(world.当前日期);
           const aligned = 对齐世界日期与天数(world.开拓天数 + 1, nextDate);
           push({ action: 'set', key: '世界.开拓天数', value: aligned.开拓天数 });
           push({ action: 'set', key: '世界.当前日期', value: aligned.当前日期 });
           push({ action: 'set', key: '世界.当前时间', value: fact.targetTime });
-          continue;
-        }
-        if (current !== null && next < current) {
-          warnings.push(`time(set_time) 已忽略疑似同日时间回退：当前 ${world.当前时间}，事实目标 ${fact.targetTime}；若剧情跨日，请输出 mode=next_day/overnight 并写明证据。`);
           continue;
         }
         push({ action: 'set', key: '世界.当前时间', value: fact.targetTime });

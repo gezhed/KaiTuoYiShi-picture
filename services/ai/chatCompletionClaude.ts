@@ -1,5 +1,5 @@
 import type { API配置项 } from '@/models/settings';
-import { errorText, fetchWithApiErrorReport, throwApiError } from './chatCompletionOpenAICompat';
+import { errorText, fetchWithApiErrorReport, readJsonResponseBody, throwApiError } from './chatCompletionOpenAICompat';
 import { normalizeClaudeBaseUrl } from './chatCompletionProvider';
 import { parseClaudeTextResponse, readOpenAICompatibleStreamDelta, runSseStream } from './chatCompletionStream';
 import type { ChatCompletionRequest, StreamCallbacks } from './chatCompletionTypes';
@@ -156,7 +156,7 @@ export async function completionClaudeNonStream(
     await throwApiError(config, 'Claude 非流式补全', url, 'non-stream', response.status, await errorText(response), formatClaudeError);
   }
 
-  const json = await response.json();
+  const json = await readJsonResponseBody(response, config, url, 'Claude 非流式补全');
   emitUsageFromResponse(json, config, request);
   return parseClaudeTextResponse(json);
 }

@@ -205,6 +205,36 @@ export async function errorText(response: Response): Promise<string> {
   return response.text().catch(() => '');
 }
 
+/**
+ * 读取非流式响应体并解析 JSON。部分中转/“假流式”模型会在 HTTP 200 下返回字面量 undefined 等非 JSON 内容，
+ * 直接 response.json() 会抛出难懂的 `"undefined" is not valid JSON`；这里统一给出可读错误并记入诊断。
+ */
+export async function readJsonResponseBody(
+  response: Response,
+  config: API配置项,
+  url: string,
+  source: string,
+): Promise<unknown> {
+  const raw = await response.text().catch(() => '');
+  try {
+    return JSON.parse(raw);
+  } catch {
+    const preview = raw.trim().slice(0, 200).replace(/\s+/g, ' ') || '（空响应）';
+    const error = new Error(`接口返回了非 JSON 响应（HTTP ${response.status}）：${preview}`);
+    (error as { alreadyReportedByApiLayer?: boolean }).alreadyReportedByApiLayer = true;
+    void appendApiErrorReport({
+      source,
+      config,
+      status: response.status,
+      requestUrl: url,
+      requestMode: 'non-stream',
+      error,
+      responseText: raw,
+    });
+    throw error;
+  }
+}
+
 /** 调用方如需先做降级判断，先 errorText 再调用。 */
 export function throwApiError(
   config: API配置项,

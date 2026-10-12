@@ -299,6 +299,10 @@ export interface 剧情编织系统设置 {
   剧情推进AI判定: boolean;
   /** 留空复用剧情编织 api，再回退主 API。 */
   推进判定API: 剧情编织API覆盖设置;
+  /** 剧情对齐巡检：每隔若干回合用 AI 把近期正文总结与剧情库比对，向前纠正当前段；默认关闭。 */
+  剧情对齐巡检: boolean;
+  /** 剧情对齐巡检的间隔回合数。 */
+  剧情对齐巡检间隔: number;
   /** 旧存档缺省关闭，可手动开启。 */
   世界演变: boolean;
 }
@@ -581,6 +585,8 @@ export function 创建默认剧情编织系统设置(): 剧情编织系统设置
     currentWindow: true,
     剧情推进AI判定: false,
     推进判定API: 创建空剧情编织API覆盖(),
+    剧情对齐巡检: false,
+    剧情对齐巡检间隔: 6,
     世界演变: true,
   };
 }
@@ -635,6 +641,8 @@ export function 归一化剧情编织系统设置(input?: Partial<剧情编织�
     currentWindow: input.currentWindow !== false,
     剧情推进AI判定: input.剧情推进AI判定 === true,
     推进判定API: normalizeApiOverride(input.推进判定API, defaults.推进判定API),
+    剧情对齐巡检: input.剧情对齐巡检 === true,
+    剧情对齐巡检间隔: Math.max(2, Math.min(30, Math.trunc(input.剧情对齐巡检间隔 ?? defaults.剧情对齐巡检间隔) || defaults.剧情对齐巡检间隔)),
     世界演变: input.世界演变 === true,
   };
 }

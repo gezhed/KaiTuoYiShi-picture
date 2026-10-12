@@ -1,7 +1,7 @@
 import type { API配置项 } from '@/models/settings';
 import { buildClaudeRequestBody } from './chatCompletionClaude';
 import { buildGeminiRequestBody } from './chatCompletionGemini';
-import { applySamplingParams, buildOpenAICompatibleRequestBody, errorText, fetchWithApiErrorReport, isStreamUsageOptionUnsupported, throwApiError } from './chatCompletionOpenAICompat';
+import { applySamplingParams, buildOpenAICompatibleRequestBody, errorText, fetchWithApiErrorReport, isStreamUsageOptionUnsupported, readJsonResponseBody, throwApiError } from './chatCompletionOpenAICompat';
 import { parseClaudeTextResponse, parseOpenAICompatibleTextResponse, parseOpenCodeGeminiText, parseOpenCodeResponsesText, readOpenAICompatibleStreamDelta, runSseStream } from './chatCompletionStream';
 import type { ChatCompletionRequest, StreamCallbacks } from './chatCompletionTypes';
 import { emitUsageFromResponse } from './chatCompletionUsage';
@@ -267,7 +267,7 @@ export async function completionOpenCodeNonStream(
     await throwApiError(normalized, handler.来源标签, upstreamUrl, 'non-stream', response.status, await errorText(response),
       (status, responseText) => formatOpenCodeError(normalized, endpoint, status, responseText));
   }
-  const json = await response.json();
+  const json = await readJsonResponseBody(response, normalized, upstreamUrl, handler.来源标签);
   emitUsageFromResponse(json, normalized, request);
   return handler.解析(json);
 }

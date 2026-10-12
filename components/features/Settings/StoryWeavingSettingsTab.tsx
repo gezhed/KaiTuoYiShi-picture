@@ -124,10 +124,31 @@ export function StoryWeavingSettingsTab({ settings, onChange, apiSettings, onPer
 
       <ToggleRow
         label="剧情推进 AI 判定"
-        desc="开启后用独立 AI 判断本分段是否完成与实际进度；结果只作补充证据、不越权改判，失败仅留诊断。"
+        desc="开启后用独立 AI 判断本分段是否完成与实际所在分段；命中后续分段时会直接推进当前段，失败仅留诊断。"
         checked={story.剧情推进AI判定}
         onChange={(v) => patch({ 剧情推进AI判定: v })}
       />
+
+      <ToggleRow
+        label="剧情对齐巡检"
+        desc="每隔若干回合用 AI 把近期正文总结与剧情库比对，向前纠正当前段（只向前；判断不了就不动）。默认关闭。"
+        checked={story.剧情对齐巡检}
+        onChange={(v) => patch({ 剧情对齐巡检: v })}
+      />
+
+      {story.剧情对齐巡检 && (
+        <Field label="对齐巡检间隔（回合）">
+          <input
+            type="number"
+            min={2}
+            max={30}
+            value={story.剧情对齐巡检间隔}
+            onChange={(e) => patch({ 剧情对齐巡检间隔: Math.max(2, Math.min(30, Number(e.target.value) || 6)) })}
+            className="kaituo-input w-28 px-3 py-2 text-sm"
+            style={{ clipPath: smallClip }}
+          />
+        </Field>
+      )}
 
       <ToggleRow
         label="世界演变"

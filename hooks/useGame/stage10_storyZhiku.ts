@@ -3,10 +3,13 @@ import { autoAlignCanonStoryProgress, 获取当前剧情分段, 获取激活剧�
 import { 评估剧情区域连续性, 推断系列区域ID } from '@/models/region';
 import { buildStoryAdvanceJudgeApiConfig } from '@/services/storyWeaving';
 import { judgeStoryAdvance, type StoryAdvanceJudgement } from '@/services/storyAdvanceJudge';
+import { runStoryAlignmentSweep, buildRecentStorySweepSummary } from '@/services/storyAlignmentSweep';
 import { applyStoryArchiveZhikuRuntimeUnlock } from '@/services/zhikuRuntimeUnlock';
 import { addImmediateMemory } from './memoryUtils';
 import { pushQueueTask } from './workflowTaskRuntime';
 import { devLog } from '@/utils/devLog';
+import { saveSetting } from '@/services/storage/settings';
+import { buildPersistedStoryWeavingSystem } from '@/data/storyWeavingPreset';
 import type { 记忆系统 } from '@/models/memory';
 import type { NPC记录 } from '@/models/npc';
 import {
@@ -50,13 +53,38 @@ export async function stage10_storyZhiku(
     ? d.parsedForDisplay?.storyAdvance ?? null
     : null;
 
+  const storySettings = state.deviceSettings.gameSettings.剧情编织系统;
+  const sweepEnabled = storySettings.剧情对齐巡检;
+  const sweepInterval = Math.max(2, Math.trunc(storySettings.剧情对齐巡检间隔) || 6);
+  const isSweepTurn = sweepEnabled && (turnCountAtStart + 1) % sweepInterval === 0;
+
   let advanceJudge: StoryAdvanceJudgement | null = null;
-  if (state.deviceSettings.gameSettings.剧情编织系统.剧情推进AI判定 && !skipStoryAlignment && !continuity.hold) {
+  let advanceWindow: number | undefined;
+  if ((isSweepTurn || storySettings.剧情推进AI判定) && !skipStoryAlignment && !continuity.hold) {
     const judgeSegment = 获取当前剧情分段(state.剧情编织);
     const judgeConfig = judgeSegment
       ? buildStoryAdvanceJudgeApiConfig(state.deviceSettings.gameSettings, state.deviceSettings.apiSettings)
       : null;
-    if (judgeSegment && judgeConfig) {
+    const sweepSeries = 获取激活剧情系列(state.剧情编织);
+    if (isSweepTurn && judgeSegment && judgeConfig && sweepSeries) {
+      const summary = buildRecentStorySweepSummary(state.chatHistory, sweepInterval);
+      const sweep = await runStoryAlignmentSweep(
+        judgeConfig,
+        { series: sweepSeries, currentSegment: judgeSegment, summary },
+        ctx.abortController.signal,
+      );
+      if (sweep) {
+        advanceJudge = sweep;
+        // 巡检是定期复盘追赶：允许跨越更远的分段窗口，纠正逐回合判定留下的漂移。
+        advanceWindow = Number.POSITIVE_INFINITY;
+      }
+      devLog('stage', 'stage10.alignment_sweep', {
+        turn: turnCountAtStart + 1,
+        interval: sweepInterval,
+        target: sweep?.actualSegmentId ?? null,
+        reason: sweep?.reason,
+      });
+    } else if (storySettings.剧情推进AI判定 && judgeSegment && judgeConfig) {
       advanceJudge = await judgeStoryAdvance(judgeConfig, { currentSegment: judgeSegment, body: displayText, playerInput: userInput }, ctx.abortController.signal);
       devLog('stage', 'stage10.advance_judge', {
         completed: advanceJudge?.completed ?? null,
@@ -84,6 +112,7 @@ export async function stage10_storyZhiku(
         advanceJudge,
         declaredAdvance,
         factEvidence: d.worldFactEvidence,
+        advanceWindow,
       });
   const storyProgressMemoryLine = storyAlignment.progressed
     ? buildStoryProgressMemoryLine(state.剧情编织, storyAlignment.system)
@@ -100,6 +129,8 @@ export async function stage10_storyZhiku(
     storyWeavingConcurrentChange = resolvedStory.concurrentChange;
     if (!storyWeavingConcurrentChange) {
       state.set剧情编织(storyWeavingForSave);
+      // 后台推进后回写设置：否则下一回合拿「运行时已推进」与「陈旧设置」比对，会被误判为并发变更而把进度回退。
+      await saveSetting('storyWeavingSystem', buildPersistedStoryWeavingSystem(storyWeavingForSave));
     } else {
       pushQueueTask(state, 'zhiku', 'success', {
         detail: '检测到剧情编织面板已有更新，本回合后台未覆盖最新导入/分解结果。',

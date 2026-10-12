@@ -134,48 +134,48 @@ describe('申报背书参与对齐', () => {
     expect(当前组号(result.system)).toBe(3);
   });
 
-  it('背书过的申报目标把候选收窄到 seg2：seg2 证据不足不跳，整体不推进', () => {
+  it('申报目标被采信：玩家走别的路径抵达时，按申报进入该分段（不再要求正文关键词背书）', () => {
     const result = autoAlignCanonStoryProgress({
       storyWeaving: 三段系统(),
       turnCount: 6,
-      body,
+      body: '列车在空间站外围巡航，三月七清点物资。',
       userInput: '继续',
       declaredAdvance: { completed: false, targetSegment: '主控舱段警报解除' },
     });
-    expect(result.progressed).toBe(false);
-    expect(当前组号(result.system)).toBe(1);
+    expect(result.progressed).toBe(true);
+    expect(当前组号(result.system)).toBe(2);
   });
 
   it('申报目标支持组号写法，效果与标题一致', () => {
     const result = autoAlignCanonStoryProgress({
       storyWeaving: 三段系统(),
       turnCount: 6,
-      body,
+      body: '列车在空间站外围巡航，三月七清点物资。',
       userInput: '继续',
       declaredAdvance: { completed: false, targetSegment: '2' },
     });
-    expect(result.progressed).toBe(false);
-    expect(当前组号(result.system)).toBe(1);
+    expect(result.progressed).toBe(true);
+    expect(当前组号(result.system)).toBe(2);
   });
 
-  it('无背书的申报目标被忽略：结果与无申报基线一致', () => {
-    const baseline = autoAlignCanonStoryProgress({ storyWeaving: 三段系统(), turnCount: 6, body, userInput: '继续' });
-    const withUnendorsed = autoAlignCanonStoryProgress({
-      storyWeaving: 三段系统(),
-      turnCount: 6,
-      body: '列车在空间站外围巡航，三月七清点物资。',
-      userInput: '继续',
-      declaredAdvance: { completed: false, targetSegment: '主控舱段警报解除' },
-    });
+  it('无申报时不推进：与有申报对照，证明推进来自申报目标而非关键词', () => {
     const plain = autoAlignCanonStoryProgress({
       storyWeaving: 三段系统(),
       turnCount: 6,
       body: '列车在空间站外围巡航，三月七清点物资。',
       userInput: '继续',
     });
-    expect(baseline.progressed).toBe(true);
-    expect(withUnendorsed.progressed).toBe(plain.progressed);
-    expect(当前组号(withUnendorsed.system)).toBe(当前组号(plain.system));
+    const withDeclared = autoAlignCanonStoryProgress({
+      storyWeaving: 三段系统(),
+      turnCount: 6,
+      body: '列车在空间站外围巡航，三月七清点物资。',
+      userInput: '继续',
+      declaredAdvance: { completed: false, targetSegment: '主控舱段警报解除' },
+    });
+    expect(plain.progressed).toBe(false);
+    expect(当前组号(plain.system)).toBe(1);
+    expect(withDeclared.progressed).toBe(true);
+    expect(当前组号(withDeclared.system)).toBe(2);
   });
 
   it('越窗的申报目标被忽略', () => {
