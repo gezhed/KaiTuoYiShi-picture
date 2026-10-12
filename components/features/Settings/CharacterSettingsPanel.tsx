@@ -435,10 +435,16 @@ export function CharacterSettingsPanel({
                   }
                 />
                 <div className="text-[11px] leading-relaxed" style={{ color: 'rgba(var(--tj-text-secondary), 0.68)' }}>
-                  提示词里的写法：<code>$名字-sfw-upperbody-sfw-lowerbody$</code>、
-                  <code className="ml-1">$名字-nsfw-upperbody$</code>、
-                  <code className="ml-1">$名字-sfw-upperbody$</code>。
-                  也可以用 JSON 形式 <code>{'{"name":"名字","angle":"from behind","upperBody":"sfw"}'}</code>。
+                  提示词里的写法：<code>$名字-sfw-upperbody$</code>（只注入上半身）、
+                  <code className="ml-1">$名字-nsfw-lowerbody$</code>（只注入下半身）、
+                  <code className="ml-1">$名字-sfw-upperbody-sfw-lowerbody$</code>（两段都要）。
+                  「只要下半身」时不会注入面部——否则模型会顺势给上半身镜头。
+                  <br />
+                  想限定**取景**（画面里只出现上半身/下半身）还得给构图词，两种写法都行：
+                  直接写在提示词里（<code>upper body, $名字-sfw-upperbody$</code>），
+                  或在 JSON 形式里用 <code>framing</code>：
+                  <code className="ml-1">{'{"name":"名字","angle":"","upperBody":"sfw","framing":"upper body"}'}</code>
+                  （<code>angle</code> 键的存在与否区分角色与服装，角色要写它，可以是空串）。
                   未识别的名字会原样保留，便于发现写错。
                 </div>
                 {角色列表.length > 0 ? (

@@ -165,9 +165,23 @@ describe('拼装角色替换', () => {
       .toBe('silver hair, back hair, coat back, skirt back');
   });
 
-  it('hidden 档位不拼该部位', () => {
+  it('hidden 档位不拼该部位；面部随上半身一起给（对齐上游）', () => {
+    // 两个部位都 hidden：只剩角色特征。上游的后缀形式 `if (format.upper)`、
+    // JSON 形式 `if (upperState !== "hidden")` 都是「要上半身才带脸」——
+    // 否则「只要下半身」的写法会连脸一起注入，模型顺势给上半身镜头。
     expect(拼装角色替换(角色, { upper: 'hidden', lower: 'hidden', fromBehind: false }).提示词)
-      .toBe('silver hair, green eyes');
+      .toBe('silver hair');
+    expect(拼装角色替换(角色, { upper: 'hidden', lower: 'sfw', fromBehind: false }).提示词)
+      .toBe('silver hair, white skirt');
+    expect(拼装角色替换(角色, { upper: 'hidden', lower: 'sfw', fromBehind: true }).提示词)
+      .toBe('silver hair, skirt back');
+  });
+
+  it('构图词原样拼在最后（用来限定取景）', () => {
+    expect(拼装角色替换(角色, { upper: 'sfw', lower: 'hidden', fromBehind: false, framing: 'upper body' }).提示词)
+      .toBe('silver hair, green eyes, white coat, upper body');
+    expect(拼装角色替换(角色, { upper: 'hidden', lower: 'nsfw', fromBehind: false, framing: 'lower body' }).提示词)
+      .toBe('silver hair, lower body');
   });
 
   it('nsfw 档位走 nsfw 字段，负面词单独返回', () => {
@@ -227,6 +241,57 @@ describe('处理角色提示词', () => {
     });
     const 结果 = 处理角色提示词('$战斗服-upperbody-lowerbody$', 建上下文([带服装]));
     expect(结果.提示词).toBe('battle top, battle skirt');
+  });
+
+  it('只要下半身时不再带脸（这正是「只出镜下半身」的关键）', () => {
+    const 带脸 = 建角色({
+      nameCN: '流萤',
+      characterTraits: 'silver hair',
+      facialFeatures: 'green eyes',
+      fullBodySFW: 'white skirt',
+    });
+    const 上下文2 = 建上下文([带脸]);
+    expect(处理角色提示词('$流萤-sfw-lowerbody$', 上下文2).提示词).toBe('silver hair, white skirt');
+    expect(处理角色提示词('$流萤-sfw-upperbody$', 上下文2).提示词).toBe('silver hair, green eyes');
+  });
+
+  it('JSON 形式的 framing 原样拼出构图词', () => {
+    const 输入 = '$' + JSON.stringify({ name: '流萤', angle: '', upperBody: 'sfw', lowerBody: 'hidden', framing: 'upper body' }) + '$';
+    expect(处理角色提示词(输入, 上下文).提示词).toBe('silver hair, white coat, upper body');
+
+    const 下半身 = '$' + JSON.stringify({ name: '流萤', angle: '', upperBody: 'hidden', lowerBody: 'sfw', framing: 'lower body' }) + '$';
+    // 这个上下文里下半身 SFW 是「white skirt」，且不再带脸。
+    expect(处理角色提示词(下半身, 上下文).提示词).toBe('silver hair, white skirt, lower body');
+  });
+
+  it('构图词也认 构图 / frame / camera 几个写法', () => {
+    for (const 键 of ['framing', 'frame', 'camera', '构图']) {
+      const 输入 = '$' + JSON.stringify({ name: '流萤', angle: '', upperBody: 'sfw', [键]: 'cowboy shot' }) + '$';
+      expect(处理角色提示词(输入, 上下文).提示词, 键).toBe('silver hair, white coat, cowboy shot');
+    }
+  });
+
+  it('服装标签同样支持构图词', () => {
+    const 带服装 = 建角色({
+      nameCN: '流萤',
+      outfits: [{ id: 'o1', name: '战斗服', 上半身: 'battle top', 下半身: 'battle skirt', 全身: '', 负面: '' }],
+    });
+    // 服装也按「写了才拼」算：只写 upperBody 就只给上衣。
+    const 只有上半身 = '$' + JSON.stringify({ name: '战斗服', upperBody: 'visible', framing: 'upper body' }) + '$';
+    expect(处理角色提示词(只有上半身, 建上下文([带服装])).提示词).toBe('battle top, upper body');
+    const 两件都显 = '$' + JSON.stringify({ name: '战斗服', upperBody: 'visible', lowerBody: 'visible', framing: 'cowboy shot' }) + '$';
+    expect(处理角色提示词(两件都显, 建上下文([带服装])).提示词).toBe('battle top, battle skirt, cowboy shot');
+  });
+
+  it('服装后缀：-upperbody 只给上衣、-lowerbody 只给下装（对齐上游 hasUpper/hasLower）', () => {
+    const 带服装 = 建角色({
+      nameCN: '流萤',
+      outfits: [{ id: 'o1', name: '战斗服', 上半身: 'battle top', 下半身: 'battle skirt', 全身: 'full battle', 负面: '' }],
+    });
+    const 上下文2 = 建上下文([带服装]);
+    expect(处理角色提示词('$战斗服-upperbody$', 上下文2).提示词).toBe('battle top');
+    expect(处理角色提示词('$战斗服-lowerbody$', 上下文2).提示词).toBe('battle skirt');
+    expect(处理角色提示词('$战斗服-upperbody-lowerbody$', 上下文2).提示词).toBe('battle top, battle skirt');
   });
 
   it('JSON 形式带 angle 时识别为角色而非服装', () => {

@@ -22,6 +22,8 @@ export interface 角色替换格式 {
   upper: 上下身档位;
   lower: 上下身档位;
   fromBehind: boolean;
+  /** 构图词（可选）：原样拼进结果末尾，见 `解析段.framing`。 */
+  framing?: string;
 }
 
 export interface 角色替换结果 {
@@ -135,6 +137,15 @@ interface 解析段 {
   upper?: 上下身档位;
   lower?: 上下身档位;
   angle?: string;
+  /**
+   * 构图词（可选）：原样拼进替换结果，用来把画面限制在某个范围。
+   *
+   * 上游没有这个概念——它只决定**注入哪几段部位描述**，不会约束取景，
+   * 而「只出镜上半身 / 只出镜下半身」要的正是取景。写在这里的文案会被逐字使用
+   * （例如 `upper body` / `portrait` / `cowboy shot` / `lower body`），
+   * 不做词表校验：构图词本来就随模型与作者习惯变化。
+   */
+  framing?: string;
 }
 
 /** 解析 `$…$` 段：先 JSON，再旧版后缀。返回 null 表示无法识别。 */
@@ -150,8 +161,11 @@ function 解析角色段(段: string): { 解析: 解析段; 是服装: boolean }
       const upper = typeof 对象.upperBody === 'string' ? (对象.upperBody as 上下身档位) : undefined;
       const lower = typeof 对象.lowerBody === 'string' ? (对象.lowerBody as 上下身档位) : undefined;
       const angle = typeof 对象.angle === 'string' ? 对象.angle : undefined;
+      // 构图词接受 framing / frame / camera / 构图 几个写法，少认一种用户就以为没生效。
+      const framing源 = 对象.framing ?? 对象.frame ?? 对象.camera ?? 对象.构图;
+      const framing = typeof framing源 === 'string' ? framing源.trim() : undefined;
       // `angle` 键的存在与否区分角色与服装。
-      return { 解析: { 名称, upper, lower, angle }, 是服装: angle === undefined };
+      return { 解析: { 名称, upper, lower, angle, framing }, 是服装: angle === undefined };
     } catch {
       return null;
     }
@@ -204,14 +218,27 @@ export function 拼装角色替换(角色: 角色卡, 格式: 角色替换格式
   const 背后 = 格式.fromBehind;
 
   追加(取字段(角色, 'characterTraits'));
-  追加(背后 ? 取字段(角色, 'facialFeaturesBack') : 取字段(角色, 'facialFeatures'));
 
-  if (格式.upper === 'sfw') 追加(背后 ? 取字段(角色, 'upperBodySFWBack') : 取字段(角色, 'upperBodySFW'));
-  else if (格式.upper === 'nsfw') 追加(背后 ? 取字段(角色, 'upperBodyNSFWBack') : 取字段(角色, 'upperBodyNSFW'));
+  /*
+   * 面部**只在上半身被请求时**注入 —— 对齐上游（`processCharacterPrompt`：
+   * 后缀形式的 `if (format.upper)`、JSON 形式的 `if (upperState !== 'hidden')`）。
+   *
+   * 这里曾经无条件注入，于是 `$名字-nsfw-lowerbody$` 这种「只要下半身」的写法
+   * 仍会把脸（绿眼睛、发型…）塞进去，模型顺势就给一个上半身镜头 ——
+   * 用户要的「只出镜下半身」根本落不了地。
+   */
+  if (格式.upper !== 'hidden') {
+    追加(背后 ? 取字段(角色, 'facialFeaturesBack') : 取字段(角色, 'facialFeatures'));
+    if (格式.upper === 'sfw') 追加(背后 ? 取字段(角色, 'upperBodySFWBack') : 取字段(角色, 'upperBodySFW'));
+    else if (格式.upper === 'nsfw') 追加(背后 ? 取字段(角色, 'upperBodyNSFWBack') : 取字段(角色, 'upperBodyNSFW'));
+  }
 
   // 注意：fullBody* 承载的是下半身（界面文案「下半身」），不是全身。
   if (格式.lower === 'sfw') 追加(背后 ? 取字段(角色, 'fullBodySFWBack') : 取字段(角色, 'fullBodySFW'));
   else if (格式.lower === 'nsfw') 追加(背后 ? 取字段(角色, 'fullBodyNSFWBack') : 取字段(角色, 'fullBodyNSFW'));
+
+  // 构图词放最后：它是取景约束，不属于角色描述本身。
+  if (格式.framing) 追加(格式.framing);
 
   return { 提示词: 片段.join(', '), 角色负面: 取字段(角色, 'negative') };
 }
@@ -227,6 +254,8 @@ function 拼装服装替换(服装: 服装条目, 格式: 角色替换格式): s
     if (格式.upper === 'visible') 片段.push(服装.上半身);
     if (格式.lower === 'visible') 片段.push(服装.下半身);
   }
+  // 构图词与角色那边同一口径：原样拼在最后，用来限定取景。
+  if (格式.framing) 片段.push(格式.framing);
   return 片段.filter(Boolean).join(', ');
 }
 
@@ -259,10 +288,18 @@ export function 处理角色提示词(提示词: string, 上下文: 角色匹配
     if (是服装) {
       const 服装 = 查找最佳服装(解析.名称, 上下文);
       if (!服装) return 完整;
+      /*
+       * 没写的那一段**不拼**（`hidden`），对齐上游的 `hasUpper`/`hasLower`：
+       * 后缀形式的 `-upperbody` 只给上半身、`-lowerbody` 只给下半身，
+       * 两者都写才是整套。这里曾经把缺省当 `visible`，于是
+       * `$战斗服-upperbody$` 会把下半身也一起拼进去，「只要上衣」根本写不出来。
+       * JSON 形式本来就是显式档位（visible / hidden），同样按写没写来算。
+       */
       const 拼装 = 拼装服装替换(服装, {
-        upper: 解析.upper ?? 'visible',
-        lower: 解析.lower ?? 'visible',
+        upper: 解析.upper ?? 'hidden',
+        lower: 解析.lower ?? 'hidden',
         fromBehind,
+        framing: 解析.framing,
       });
       return 拼装 || 完整;
     }
@@ -273,6 +310,7 @@ export function 处理角色提示词(提示词: string, 上下文: 角色匹配
       upper: 解析.upper ?? 'hidden',
       lower: 解析.lower ?? 'hidden',
       fromBehind,
+      framing: 解析.framing,
     });
     if (替换.角色负面) 负面集合.push(替换.角色负面);
     return 替换.提示词 || 完整;
@@ -318,6 +356,7 @@ export function 提取出场角色(提示词: string, 上下文: 角色匹配上
       upper: 解析结果.解析.upper ?? 'hidden',
       lower: 解析结果.解析.lower ?? 'hidden',
       fromBehind,
+      framing: 解析结果.解析.framing,
     });
     结果.push({
       角色,

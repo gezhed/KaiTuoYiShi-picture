@@ -33,6 +33,80 @@ const 分组: Array<{ title: string; 字段: Array<typeof 角色部位字段名[
   { title: '负面', 字段: ['negative'] },
 ];
 
+/**
+ * 「可复制的标签」清单。
+ *
+ * 用户要的不是「知道有后缀这回事」，而是**这张图要上半身、那张要下半身**时能立刻拿到
+ * 那串东西。所以直接把当前这张卡（或某件服装）的可用写法列出来，点一下就进剪贴板。
+ */
+function 标签清单({
+  名称,
+  服装名,
+  只出镜,
+  提示,
+}: {
+  /** 角色名（用第一个别名；`|` 后面的是别名，标签写哪个都认）。 */
+  名称: string;
+  /** 给了就按服装列（服装只有「显不显示」这一档）。 */
+  服装名?: string;
+  /** 是否附上「只出镜」的 JSON 写法（角色专属）。 */
+  只出镜?: boolean;
+  提示: (文本: string) => void;
+}) {
+  const 复制 = async (文本: string) => {
+    try {
+      await navigator.clipboard.writeText(文本);
+      提示(`已复制：${文本}`);
+    } catch {
+      提示('复制失败：浏览器不允许写入剪贴板，请手动选中复制。');
+    }
+  };
+  const 行: Array<{ 标签: string; 说明: string }> = 服装名
+    ? [
+      { 标签: `$${服装名}-upperbody$`, 说明: '只有上半身这件' },
+      { 标签: `$${服装名}-lowerbody$`, 说明: '只有下半身这件' },
+      { 标签: `$${服装名}-upperbody-lowerbody$`, 说明: '整套' },
+    ]
+    : [
+      { 标签: `$${名称}-sfw-upperbody$`, 说明: '只注入上半身（SFW）' },
+      { 标签: `$${名称}-nsfw-upperbody$`, 说明: '只注入上半身（NSFW）' },
+      { 标签: `$${名称}-sfw-lowerbody$`, 说明: '只注入下半身（SFW）' },
+      { 标签: `$${名称}-nsfw-lowerbody$`, 说明: '只注入下半身（NSFW）' },
+      { 标签: `$${名称}-sfw-upperbody-sfw-lowerbody$`, 说明: '上下都要（SFW）' },
+      { 标签: `$${名称}-nsfw-upperbody-nsfw-lowerbody$`, 说明: '上下都要（NSFW）' },
+      ...(只出镜
+        ? [
+          {
+            // 用 JSON.stringify 拼：模板串里的 `${{…}}` 会被当成 `${ 对象 }` 求值成
+            // `[object Object]`（踩过一次），这里必须显式序列化。
+            标签: `$${JSON.stringify({ name: 名称, angle: '', upperBody: 'sfw', framing: 'upper body' })}$`,
+            说明: '只要上半身出镜（构图词限制取景）',
+          },
+          {
+            标签: `$${JSON.stringify({ name: 名称, angle: '', upperBody: 'hidden', lowerBody: 'nsfw', framing: 'lower body' })}$`,
+            说明: '只要下半身出镜',
+          },
+        ]
+        : []),
+    ];
+  return (
+    <div className="space-y-1">
+      {行.map((项) => (
+        <div key={项.标签} className="flex items-center gap-2">
+          <code
+            className="min-w-0 flex-1 truncate px-1.5 py-0.5 text-[11px]"
+            style={{ color: 'rgba(var(--tj-text-primary), 0.88)', background: 'rgba(var(--tj-ui-panel-strong), 0.5)' }}
+          >
+            {项.标签}
+          </code>
+          <span className="shrink-0 text-[10px]" style={{ color: 'rgba(var(--tj-text-secondary), 0.6)' }}>{项.说明}</span>
+          <次级按钮 onClick={() => void 复制(项.标签)}>复制</次级按钮>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 export function 建角色卡(名称: string): 角色卡 {
   const 时间 = Date.now();
   return {
@@ -109,6 +183,7 @@ export function CharacterSettingsEditor({
   NovelAI模型?: string;
 }) {
   const [展开段, set展开段] = useState<string>('身份');
+  const [提示, set提示] = useState('');
   // 词库面板追加时的落点：最后一个获得焦点的部位字段，默认落在「角色特征」。
   const 上次聚焦 = useRef<typeof 角色部位字段名[number]>('characterTraits');
 
@@ -175,7 +250,32 @@ export function CharacterSettingsEditor({
         );
       })}
 
-      <面板 title="服装" desc="`$服装名-upperbody-lowerbody$` 触发；不带 angle 的 JSON 形式也走服装。">
+      <面板
+        title="提示词里怎么写"
+        desc="点「复制」拿到整串标签，粘到生图提示词（或「提示词预览」）里即可。只写哪个部位，就只注入那几段字段。"
+      >
+        {提示 ? <提示条 kind="info" text={提示} /> : null}
+        <标签清单
+          名称={(角色.nameCN || 角色.nameEN || '名字').split('|')[0].trim()}
+          只出镜
+          提示={set提示}
+        />
+        {角色.outfits.length > 0 ? (
+          <div className="space-y-1.5">
+            <div className="text-[11px] tracking-[0.18em]" style={{ color: 'rgba(var(--tj-text-secondary), 0.68)' }}>服装</div>
+            {角色.outfits.map((服装) => (
+              <标签清单
+                key={服装.id}
+                名称=""
+                服装名={(服装.name || '服装名').trim()}
+                提示={set提示}
+              />
+            ))}
+          </div>
+        ) : null}
+      </面板>
+
+      <面板 title="服装" desc="`$服装名-upperbody$` 只给上衣、`-lowerbody$` 只给下装、`-upperbody-lowerbody$` 整套；不带 angle 的 JSON 形式也走服装。">
         <div className="flex flex-wrap gap-2">
           <次级按钮
             onClick={() => {

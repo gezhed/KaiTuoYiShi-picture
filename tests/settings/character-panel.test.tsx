@@ -189,6 +189,35 @@ describe('角色管理面板', () => {
     expect(screen.getByText('写入角色卡')).toBeInTheDocument();
   });
 
+  it('角色卡页给出可复制的标签（含服装与只出镜写法）', async () => {
+    const 写文本 = vi.fn(async () => {});
+    Object.assign(navigator, { clipboard: { writeText: 写文本 } });
+    const 系统 = 建系统();
+    系统.角色卡.char_1 = 建角色({
+      outfits: [{ id: 'o1', name: '战斗服', 上半身: 'battle top', 下半身: 'battle skirt', 全身: '', 负面: '' }],
+    });
+
+    render(<TestShell 初始={系统} />);
+    // 编辑器只在选中某张卡后出现：先在左栏点它。
+    fireEvent.click(await screen.findByRole('button', { name: /流萤/ }));
+
+    // 角色的部位档位
+    expect(await screen.findByText('$流萤-sfw-upperbody$')).toBeInTheDocument();
+    expect(screen.getByText('$流萤-nsfw-lowerbody$')).toBeInTheDocument();
+    // 只出镜：构图词走 JSON 形式
+    expect(screen.getByText(/\$\{\"name\":\"流萤\",\"angle\":\"\",\"upperBody\":\"sfw\",\"framing\":\"upper body\"\}\$/)).toBeInTheDocument();
+    // 服装的三档
+    expect(screen.getByText('$战斗服-upperbody$')).toBeInTheDocument();
+    expect(screen.getByText('$战斗服-lowerbody$')).toBeInTheDocument();
+    expect(screen.getByText('$战斗服-upperbody-lowerbody$')).toBeInTheDocument();
+
+    const 服装行 = screen.getByText('$战斗服-lowerbody$').closest('div');
+    fireEvent.click(服装行!.querySelector('button')!);
+    await waitFor(() => {
+      expect(写文本).toHaveBeenCalledWith('$战斗服-lowerbody$');
+    });
+  });
+
   it('生成页签的预设默认空白，并提示去导入', async () => {
     render(<TestShell 初始={建系统()} />);
     fireEvent.click(screen.getByRole('button', { name: /生成/ }));
