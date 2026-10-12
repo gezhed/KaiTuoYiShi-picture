@@ -15,6 +15,7 @@
 
 import type { 角色媒体 } from '@/models/genSystem';
 import { devLog } from '@/utils/devLog';
+import { blob转数据地址 } from '@/utils/blobEncoding';
 
 const DB_NAME = 'KaiTuoYiShiCharacterMedia';
 const DB_VERSION = 1;
@@ -111,12 +112,7 @@ export async function 读取角色媒体(媒体Id: string): Promise<Blob | null>
 export async function 读取角色媒体数据地址(媒体Id: string): Promise<string> {
   const blob = await 读取角色媒体(媒体Id);
   if (!blob) return '';
-  return new Promise<string>((resolve, reject) => {
-    const 读取器 = new FileReader();
-    读取器.onload = () => resolve(typeof 读取器.result === 'string' ? 读取器.result : '');
-    读取器.onerror = () => reject(读取器.error ?? new Error('读取角色媒体失败。'));
-    读取器.readAsDataURL(blob);
-  });
+  return blob转数据地址(blob);
 }
 
 export async function 删除角色媒体(媒体Id: string): Promise<void> {

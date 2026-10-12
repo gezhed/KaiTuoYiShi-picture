@@ -32,6 +32,8 @@ import {
 } from './comfyClient';
 import { ComfyConcurrencyGate, ComfyQueueAbort } from './comfyGate';
 import { 格式化ComfyUI错误, 规范化ComfyUI异常消息 } from './comfyError';
+// 不用 FileReader：jsdom 下会因 Blob 跨 realm 拒收。
+import { blob转数据地址, 规范化Blob } from '@/utils/blobEncoding';
 import type { ComfyUI工作流, 生成请求, 生成结果 } from './types';
 
 /** 面板上「连接后选择」的哨兵值，表示用户还没选模型。 */
@@ -108,7 +110,7 @@ async function 准备参考图(
   const 已缓存 = 参考图缓存.get(缓存键);
   if (已缓存) return 已缓存;
   const blob = await (await fetch(参考图.数据地址)).blob();
-  const 名称 = await 上传参考图(地址, blob, 参考图.文件名);
+  const 名称 = await 上传参考图(地址, await 规范化Blob(blob), 参考图.文件名);
   参考图缓存.set(缓存键, 名称);
   return 名称;
 }
@@ -326,12 +328,9 @@ export async function 生成ComfyUI图片(
         if (!媒体) throw new Error('未能从API响应中找到文件名。');
         if (媒体.isVideo) throw new Error('该工作流输出的是视频；本版本只处理图片，请检查工作流输出节点。');
         const blob = await 读取Comfy图片(地址, 媒体, 合并信号);
-        const 数据地址 = await new Promise<string>((resolve, reject) => {
-          const 读取器 = new FileReader();
-          读取器.onload = () => resolve(typeof 读取器.result === 'string' ? 读取器.result : '');
-          读取器.onerror = () => reject(读取器.error ?? new Error('读取生成图片失败。'));
-          读取器.readAsDataURL(blob);
-        });
+        // 走纯字节实现，不用 FileReader：它在 jsdom 下会因 Blob 跨 realm 拒收
+        //（"parameter 1 is not of type 'Blob'"），害得集成测试整批失败。
+        const 数据地址 = await blob转数据地址(blob);
         if (!数据地址) throw new Error('未能生成图片 URL。');
         return {
           数据地址,

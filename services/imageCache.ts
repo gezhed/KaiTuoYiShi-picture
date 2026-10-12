@@ -19,6 +19,7 @@
 import type { 缓存图片, 图片缓存条目, 生成参数快照 } from '@/models/genSystem';
 import { devLogError } from '@/utils/devLog';
 import { md5 } from '@/utils/md5';
+import { blob转数据地址 } from '@/utils/blobEncoding';
 
 const DB_NAME = 'KaiTuoYiShiImageCache';
 const DB_VERSION = 1;
@@ -134,12 +135,7 @@ export async function 读取缓存图片(图片Id: string): Promise<{ 记录: �
 export async function 读取缓存图片数据地址(图片Id: string): Promise<string> {
   const 结果 = await 读取缓存图片(图片Id);
   if (!结果) return '';
-  return new Promise<string>((resolve, reject) => {
-    const 读取器 = new FileReader();
-    读取器.onload = () => resolve(typeof 读取器.result === 'string' ? 读取器.result : '');
-    读取器.onerror = () => reject(读取器.error ?? new Error('读取缓存图片失败。'));
-    读取器.readAsDataURL(结果.blob);
-  });
+  return blob转数据地址(结果.blob);
 }
 
 /** 由图廊索引取图；索引越界时夹到有效范围（对齐来源 L4591-L4595 的钳制行为）。 */

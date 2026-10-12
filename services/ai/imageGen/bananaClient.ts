@@ -16,6 +16,8 @@
  */
 
 import type { Banana设置 } from '@/models/genSystem';
+// 不用 FileReader：jsdom 下会因 Blob 跨 realm 抛 "parameter 1 is not of type 'Blob'"。
+import { blob转数据地址, 规范化Blob } from '@/utils/blobEncoding';
 
 export function 规范化Banana地址(地址: string): string {
   return 地址.trim().replace(/\/+$/, '');
@@ -103,19 +105,11 @@ export interface Banana响应 {
   原始地址?: string;
 }
 
+/** 猜测 MIME；仅在响应头没给出类型时用到。 */
 function 猜测Mime(地址: string): string {
   if (/\.jpe?g(\?|$)/i.test(地址)) return 'image/jpeg';
   if (/\.webp(\?|$)/i.test(地址)) return 'image/webp';
   return 'image/png';
-}
-
-function blob转数据地址(blob: Blob): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const 读取器 = new FileReader();
-    读取器.onload = () => resolve(typeof 读取器.result === 'string' ? 读取器.result : '');
-    读取器.onerror = () => reject(读取器.error ?? new Error('读取图片失败。'));
-    读取器.readAsDataURL(blob);
-  });
 }
 
 /**
@@ -165,13 +159,19 @@ export interface Banana请求参数 {
   signal?: AbortSignal;
 }
 
-/** 数据地址 → Blob。edits 的 multipart 分支需要真实字节。 */
+/**
+ * 数据地址 → Blob。edits 的 multipart 分支需要真实字节。
+ *
+ * 这里重新包一层 Blob：`fetch().blob()` 返回的是运行时自己的 Blob，
+ * 而 `FormData.append` 会按当前 realm 校验类型，跨 realm 时报
+ * `parameter 1/2 is not of type 'Blob'`（在 jsdom 测试环境必现）。
+ */
 export async function 数据地址转Blob(数据地址: string): Promise<Blob> {
   const 响应 = await fetch(数据地址);
   if (!响应.ok) throw new Error(`参考图读取失败：HTTP ${响应.status}`);
   const blob = await 响应.blob();
   if (!blob.size) throw new Error('参考图内容为空。');
-  return blob;
+  return 规范化Blob(blob);
 }
 
 export async function 请求Banana图片(

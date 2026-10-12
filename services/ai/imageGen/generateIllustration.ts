@@ -50,6 +50,7 @@ import { devLog } from '@/utils/devLog';
 import { 构造SD载荷, 请求SD图片 } from './sdClient';
 import { 构造Banana载荷, 请求Banana图片 } from './bananaClient';
 import type { 生成结果 } from './types';
+import { blob转数据地址 } from '@/utils/blobEncoding';
 
 export interface 出图请求 {
   /** 插图记录里的提示词标记（含标记外壳）。 */
@@ -474,13 +475,9 @@ async function 解析NovelAI角色参考(设置: 文生图系统设置): Promise
 }
 
 function 字节转数据地址(字节: Uint8Array, mimeType: string): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const 读取器 = new FileReader();
-    读取器.onload = () => resolve(typeof 读取器.result === 'string' ? 读取器.result : '');
-    读取器.onerror = () => reject(读取器.error ?? new Error('读取生成图片失败。'));
-    // 复制成独立 buffer，避免把整个 zip 字节一并带进 Blob。
-    读取器.readAsDataURL(new Blob([字节.slice().buffer], { type: mimeType }));
-  });
+  // 复制成独立 buffer，避免把整个 zip 字节一并带进 Blob。
+  // 走 blobEncoding 而不是 FileReader：后者在 jsdom 下会因 Blob 跨 realm 拒收。
+  return blob转数据地址(new Blob([字节.slice().buffer], { type: mimeType }));
 }
 
 /**

@@ -1,4 +1,5 @@
 import { 取待落盘字节 } from './pendingAssetBytes';
+import { blob转数据地址 } from './blobEncoding';
 
 const DATA_IMAGE_RE = /^data:image\/[a-z0-9.+-]+;base64,/i;
 interface AlbumAssetCacheEntry {
@@ -33,12 +34,8 @@ export function dataUrlToBlob(dataUrl: string): Blob | null {
 }
 
 export async function blobToDataUrl(blob: Blob): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(typeof reader.result === 'string' ? reader.result : '');
-    reader.onerror = () => reject(reader.error ?? new Error('Blob 转 dataUrl 失败'));
-    reader.readAsDataURL(blob);
-  });
+  // 实现集中在 blobEncoding：不用 FileReader，避免 jsdom 下的 Blob 跨 realm 拒收。
+  return blob转数据地址(blob);
 }
 
 export function rememberAlbumAssetBlob(assetId: string, blob: Blob, mimeType?: string): void {
