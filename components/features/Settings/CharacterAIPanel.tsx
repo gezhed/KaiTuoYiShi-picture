@@ -214,8 +214,9 @@ export function CharacterAIPanel({
         {!错误 && 提示 ? <提示条 kind="info" text={提示} /> : null}
 
         {结果 && 可应用字段.length > 0 ? (
-          <面板 title={`生成结果（${可应用字段.length} 个字段，默认全选）`} desc="取消勾选的字段保持角色卡上的原值；生成值为空的字段一律不写回。">
-            <div className="space-y-2">
+          <面板 title={`生成结果（${可应用字段.length} 个字段，默认全选）`} desc="取消勾选的字段保持角色卡上的原值；生成值为空的字段一律不写回。列表限高，可内部滚动。">
+            {/* 限高：14 个字段每段都是长 tag 串，不限制会把「写入角色卡」推到大半屏之外。 */}
+            <div className="max-h-80 space-y-2 overflow-y-auto pr-1">
               {可应用字段.map(({ 键, 新值, 旧值 }) => (
                 <label
                   key={键}
@@ -254,7 +255,7 @@ export function CharacterAIPanel({
                   onChange={set追加服装}
                 />
                 {追加服装 ? (
-                  <div className="space-y-1">
+                  <div className="max-h-40 space-y-1 overflow-y-auto pr-1">
                     {结果.服装.map((草稿, 序号) => (
                       <label
                         key={`${草稿.name}-${序号}`}
@@ -312,9 +313,10 @@ export function CharacterAIPanel({
       >
         <面板
           title={`提示词消息（${角色AI.消息.length} 条，启用 ${角色AI.消息.filter((项) => 项.enabled !== false).length} 条）`}
-          desc="「人物生成」预设里角色卡那一组的破甲与规格块按原顺序收录。停用某条就不发它——例如模型不肯写 NSFW 时先停用 NSFW 规格，或反过来把讨论模式打开试试。"
+          desc="「人物生成」预设里角色卡那一组的破甲与规格块按原顺序收录。停用某条就不发它——例如模型不肯写 NSFW 时先停用 NSFW 规格，或反过来把讨论模式打开试试。列表限高，可内部滚动（每条都能单独改与启停）。"
         >
-          <div className="space-y-2">
+          {/* 限高：8 条消息各带一个多行文本框，全展开会把下面的接口设置与「保存」顶到很远。 */}
+          <div className="max-h-96 space-y-2 overflow-y-auto pr-1">
             {角色AI.消息.map((项, 序号) => (
               <div
                 key={项.id}

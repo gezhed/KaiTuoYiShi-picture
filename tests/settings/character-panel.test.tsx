@@ -158,6 +158,36 @@ describe('角色管理面板', () => {
     expect(按钮.disabled).toBe(true);
   });
 
+  it('生成结果与提示词消息列表都限高并可内部滚动', async () => {
+    const 请求生成 = vi.fn(async (): Promise<生成角色特征结果> => ({
+      字段: Object.fromEntries(['characterTraits', 'facialFeatures', 'upperBodySFW', 'upperBodyNSFW']
+        .map((键) => [键, 'long tag string, another tag, third tag（中文翻译）'])),
+      服装: [],
+      未识别: [],
+      原始回复: '<人物>…</人物>',
+      重试次数: 0,
+    }));
+    const { container } = render(<TestShell 初始={建系统()} 请求生成={请求生成} />);
+    fireEvent.click(screen.getByRole('button', { name: /生成/ }));
+
+    // 预设（提示词消息）列表：8 条各带一个多行文本框，不限高会把下面的设置顶到很远。
+    const 滚动区 = Array.from(container.querySelectorAll<HTMLElement>('.overflow-y-auto'));
+    expect(滚动区.length, '生成结果与消息列表都需要可滚动容器').toBeGreaterThanOrEqual(1);
+    expect(滚动区.some((节点) => 节点.className.includes('max-h-96'))).toBe(true);
+
+    const 要求框 = await screen.findByPlaceholderText(/流萤，星核猎手少女/);
+    fireEvent.change(要求框, { target: { value: '流萤' } });
+    fireEvent.click(screen.getByText('一键生成'));
+    await waitFor(() => {
+      expect(screen.getByText(/生成结果（4 个字段/)).toBeInTheDocument();
+    });
+    // 生成结果同样限高，且「写入角色卡」仍在同一屏内可点。
+    const 结果滚动区 = Array.from(container.querySelectorAll<HTMLElement>('.overflow-y-auto'))
+      .filter((节点) => 节点.className.includes('max-h-80'));
+    expect(结果滚动区).toHaveLength(1);
+    expect(screen.getByText('写入角色卡')).toBeInTheDocument();
+  });
+
   it('生成页签能看到「人物生成」的破甲消息，讨论模式默认停用', async () => {
     render(<TestShell 初始={建系统()} />);
     fireEvent.click(screen.getByRole('button', { name: /生成/ }));
