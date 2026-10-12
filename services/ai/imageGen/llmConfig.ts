@@ -84,6 +84,34 @@ export function 有角色AI覆盖(设置: 游戏设置): boolean {
 }
 
 /**
+ * 把一组覆盖字段与主 API 合并成一个可直接用于请求的配置。
+ *
+ * 用途是「测试连接并读取模型列表」：那时**模型还可以是空的**（用户正要选），
+ * 所以这里只要求地址能从覆盖或主 API 里取到；密钥同样由 `fetchModels` 自己校验。
+ * 返回 null 表示连地址都还没有，界面据此给出「先配主 API」的提示。
+ */
+export function 建候选配置(
+  设置: 游戏设置,
+  apiSettings: API设置 | null | undefined,
+  覆盖: { provider?: string; baseUrl: string; apiKey: string; model?: string },
+  id: string,
+  名称: string,
+): API配置项 | null {
+  const 主配置 = 取主API(apiSettings);
+  const 解析后 = resolveApiOverrideFields(
+    {
+      provider: (覆盖.provider ?? '') as API覆盖字段['provider'],
+      baseUrl: 覆盖.baseUrl,
+      apiKey: 覆盖.apiKey,
+      model: 覆盖.model ?? '',
+    },
+    主配置,
+  );
+  if (!解析后.baseUrl.trim()) return null;
+  return 组装(主配置, 解析后, id, 名称, 设置);
+}
+
+/**
  * 角色 AI（一键生成角色特征）的接口。
  *
  * 三级回退：角色 AI 的显式覆盖 → 文生图 LLM 预设 → 主 API。

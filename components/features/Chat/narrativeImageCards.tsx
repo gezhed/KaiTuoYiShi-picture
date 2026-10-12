@@ -185,6 +185,8 @@ export function NarrativeImageCard({
                       color: sizeText === 尺寸 ? 'rgb(var(--tj-on-accent))' : 'rgba(var(--tj-text-primary), 0.8)',
                       background: sizeText === 尺寸 ? 'rgb(var(--tj-accent-primary))' : 'rgba(var(--tj-ui-panel-strong), 0.5)',
                       border: '1px solid rgba(var(--tj-accent-primary), var(--tj-edge-tint-weak))',
+                      // 与卡片里的其它小按钮一致：带切角，而不是直角方块。
+                      clipPath: tinyClip,
                     }}
                   >
                     {尺寸}

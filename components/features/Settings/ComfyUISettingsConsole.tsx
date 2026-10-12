@@ -23,6 +23,7 @@ import { SelfCheckPanel } from './SelfCheckPanel';
 import { LlmSettingsPanel } from './LlmSettingsPanel';
 import { FixedStylePanel } from './FixedStylePanel';
 import { Banana尺寸列表, NovelAI采样器列表, NovelAI噪点表列表, SD放大算法列表 } from '@/models/genSystem';
+import { 建候选配置 } from '@/services/ai/imageGen/llmConfig';
 import { cardClip } from '@/components/ui/clipPaths';
 
 export type Comfy页签 = 'overview' | 'connection' | 'workflow' | 'novelai' | 'sd' | 'banana' | 'converter' | 'prompt' | 'character' | 'vocabulary' | 'cache';
@@ -43,6 +44,10 @@ interface Props {
   主API名?: string;
   主API模型?: string;
   主API地址?: string;
+  /** 设备设置里的 API 列表，供「测试连接并读取模型列表」合并覆盖字段。 */
+  apiSettings?: import('@/models/settings').API设置;
+  /** 读取模型列表；不接时两个接口面板不显示该按钮。 */
+  onFetchModels?: (config: import('@/hooks/useAiTools').ConnectionTestConfig) => Promise<string[]>;
   /** 一键生成角色特征的模型调用；不接时「生成」页签会禁用按钮。 */
   生成角色特征?: (参数: {
     系统: import('@/models/genSystem').文生图系统设置;
@@ -83,6 +88,8 @@ export function ComfyUISettingsConsole({
   主API名,
   主API模型,
   主API地址,
+  apiSettings,
+  onFetchModels,
   生成角色特征,
 }: Props) {
   const [当前页, set当前页] = useState<Comfy页签>('overview');
@@ -106,6 +113,16 @@ export function ComfyUISettingsConsole({
   const 角色上下文 = useMemo(
     () => ({ 启用列表: 系统.角色启用列表, 全部角色: 系统.角色卡 }),
     [系统.角色启用列表, 系统.角色卡],
+  );
+  // 「测试连接并读取模型列表」用的合并配置：覆盖字段留空时回退主 API，
+  // 所以这里每次渲染都按当前草稿重算，用户改完地址就能直接点。
+  const LLM候选配置 = useMemo(
+    () => (apiSettings ? 建候选配置(settings, apiSettings, 系统.LLM.API, '__image_illustration_converter__', '文生图LLM') : null),
+    [settings, apiSettings, 系统.LLM.API],
+  );
+  const 角色AI候选配置 = useMemo(
+    () => (apiSettings ? 建候选配置(settings, apiSettings, 系统.角色AI.API, '__character_ai__', '角色AI') : null),
+    [settings, apiSettings, 系统.角色AI.API],
   );
 
   const 补丁系统 = (补丁: Partial<typeof 系统>) => {
@@ -975,6 +992,8 @@ export function ComfyUISettingsConsole({
           主配置名={主API名}
           主配置模型={主API模型}
           主配置地址={主API地址}
+          候选配置={LLM候选配置}
+          onFetchModels={onFetchModels}
         />
       )}
 
@@ -1047,6 +1066,10 @@ export function ComfyUISettingsConsole({
           on追加目标变更={set追加目标}
           未保存={有未保存}
           请求生成={生成角色特征}
+          角色AI候选配置={角色AI候选配置}
+          主API模型={主API模型}
+          主API地址={主API地址}
+          onFetchModels={onFetchModels}
         />
       )}
 

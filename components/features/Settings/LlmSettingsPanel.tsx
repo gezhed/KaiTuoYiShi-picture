@@ -1,6 +1,9 @@
 import { useRef, useState } from 'react';
 import type { LLM条目, LLM预设, LLM设置 } from '@/models/genSystem';
+import type { API配置项 } from '@/models/settings';
+import type { ConnectionTestConfig } from '@/hooks/useAiTools';
 import { 面板, 提示条, 次级按钮, 开关行, 设置字段 as 字段 } from '@/components/features/Settings/settingsPrimitives';
+import { LLM接口字段 } from './LlmEndpointFields';
 
 /**
  * LLM设置。
@@ -20,6 +23,9 @@ export function LlmSettingsPanel({
   主配置名,
   主配置模型,
   主配置地址,
+  /** 覆盖字段与主 API 合并后的实际配置，供「测试连接并读取模型列表」使用。 */
+  候选配置,
+  onFetchModels,
 }: {
   LLM: LLM设置;
   onChange: (下一项: LLM设置) => void;
@@ -27,6 +33,8 @@ export function LlmSettingsPanel({
   主配置名?: string;
   主配置模型?: string;
   主配置地址?: string;
+  候选配置?: API配置项 | null;
+  onFetchModels?: (config: ConnectionTestConfig) => Promise<string[]>;
 }) {
   const [提示, set提示] = useState<{ kind: 'info' | 'ok' | 'error'; text: string } | null>(null);
   /** 正在编辑的条目 id；null 表示都在只读展示。 */
@@ -109,46 +117,15 @@ export function LlmSettingsPanel({
           onChange={(值) => 补丁({ 启用: 值 })}
         />
 
+        <LLM接口字段
+          值={LLM.API}
+          onPatch={补丁API}
+          候选配置={候选配置}
+          主配置={{ name: 主配置名, model: 主配置模型, baseUrl: 主配置地址 }}
+          onFetchModels={onFetchModels}
+          名称="文生图 LLM"
+        />
         <div className="grid gap-3 md:grid-cols-2">
-          <字段 label="接口类型" hint="留空即回退到主 API 的接口类型。">
-            <input
-              className="kaituo-input w-full px-3 py-2 text-sm"
-              value={LLM.API.provider}
-              placeholder="留空回退主 API"
-              onChange={(事件) => 补丁API({ provider: 事件.target.value })}
-            />
-          </字段>
-          <字段
-            label="模型"
-            hint={主配置模型 ? `留空回退主 API 的模型（${主配置模型}）。` : '留空回退主 API 的模型；主 API 未配模型时必须在这里填。'}
-          >
-            <input
-              className="kaituo-input w-full px-3 py-2 text-sm font-mono"
-              value={LLM.API.model}
-              placeholder={主配置模型 || '例如 gpt-4o-mini'}
-              onChange={(事件) => 补丁API({ model: 事件.target.value })}
-            />
-          </字段>
-          <字段
-            label="接口地址"
-            hint={主配置地址 ? `留空回退主 API（${主配置地址}）。` : '留空回退主 API 的地址。'}
-          >
-            <input
-              className="kaituo-input w-full px-3 py-2 text-sm font-mono"
-              value={LLM.API.baseUrl}
-              placeholder={主配置地址 || 'https://api.openai.com/v1'}
-              onChange={(事件) => 补丁API({ baseUrl: 事件.target.value })}
-            />
-          </字段>
-          <字段 label="API Key" hint="留空回退主 API 的 Key。">
-            <input
-              type="password"
-              className="kaituo-input w-full px-3 py-2 text-sm font-mono"
-              value={LLM.API.apiKey}
-              placeholder="留空回退主 API"
-              onChange={(事件) => 补丁API({ apiKey: 事件.target.value })}
-            />
-          </字段>
           <字段 label="温度" hint="越低越稳定；这一项只影响提示词生成。">
             <input
               type="number"

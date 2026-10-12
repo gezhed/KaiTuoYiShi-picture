@@ -99,7 +99,7 @@ export function VisualSettingsTab({ settings, onChange }: Props) {
         }}
       >
         <h3 className="font-serif text-sm font-bold tracking-[0.24em]" style={{ color: 'rgb(var(--tj-accent-primary))' }}>
-          逐段推进（AVG 模式）
+          galgame 模式
         </h3>
         <p className="mt-1 mb-3 text-xs leading-relaxed" style={{ color: 'rgba(var(--tj-text-secondary), 0.72)' }}>
           正文一次只显示<span style={{ color: 'rgb(var(--tj-accent-primary))' }}>一段</span>，前进时上一段消失：滚轮向下、空格或回车前进，滚轮向上回退一段。
@@ -107,8 +107,8 @@ export function VisualSettingsTab({ settings, onChange }: Props) {
           生成过程中自动全显，不打断阅读。
         </p>
         <开关行
-          label="启用逐段推进"
-          desc="只影响正文的显示方式，不改动内容，也不影响存档、变量与后续发送给模型的文本。"
+          label="启用 galgame 模式"
+          desc="只影响正文的显示方式（逐段推进），不改动内容，也不影响存档、变量与后续发送给模型的文本。"
           checked={逐段.启用}
           onChange={(值) => 更新逐段({ 启用: 值 })}
         />

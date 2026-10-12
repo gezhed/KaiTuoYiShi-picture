@@ -20,6 +20,7 @@ function ImageGenSection({
   deviceSettings,
   onGameSettingsChange,
   onPersistGameSettings,
+  fetchModels,
 }: SettingsSectionContext) {
   // LLM留空时回退主 API；把主配置的名称/模型/地址显示出来，用户才知道留空会发生什么。
   const 主配置 = deviceSettings.apiSettings.configs.find(
@@ -76,6 +77,8 @@ function ImageGenSection({
       主API名={主配置?.name}
       主API模型={主配置?.model}
       主API地址={主配置?.baseUrl}
+      apiSettings={deviceSettings.apiSettings}
+      onFetchModels={fetchModels}
       生成角色特征={请求生成角色特征}
       onTestConnection={async (地址: string) => {
         const 基址 = 地址.trim().replace(/\/+$/, '');

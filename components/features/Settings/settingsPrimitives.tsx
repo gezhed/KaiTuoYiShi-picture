@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react';
+import { smallClip, tinyClip } from '@/components/ui/clipPaths';
 
 const 标签样式 = {
   color: 'rgb(var(--tj-text-primary))',
@@ -49,17 +50,33 @@ export function 开关行({
         onClick={() => onChange(!checked)}
         className="relative h-6 w-11 flex-shrink-0 transition-all disabled:opacity-40"
         style={{
+          /*
+           * 样式与其余设置页里手写的开关**逐字对齐**（新闻/手机/记忆/忆馆/智库/剧情编织/
+           * 变量/游戏本体/NSFW/额外功能/提示词 这 11 处各写了一份同样的实现）。
+           *
+           * 为什么要对齐：这一处过去是「直角轨道 + 米色实心旋钮 + translateX 定位」，
+           * 而别处是「切角轨道 + 深色切角旋钮 + left 定位」。结果只有用到本组件的两个地方
+           * （文生图、视觉设置的 galgame 段）开关长得不一样：轨道没有斜边描边，旋钮变成
+           * 一块米色方块并且跑出轨道右侧 —— 用户报的「按钮显示 bug」就是它。
+           * 修的时候**改这一处**，不要去改那 11 处：共用件对齐既有实现，风险最小。
+           */
           background: checked
-            ? 'linear-gradient(135deg, rgba(var(--tj-btn-primary-start),0.95), rgba(var(--tj-btn-primary-end),0.85))'
-            : 'rgba(var(--tj-ui-panel-strong), 0.6)',
-          border: '1px solid rgba(var(--tj-accent-primary), var(--tj-edge-weak))',
+            ? 'linear-gradient(135deg, rgba(var(--tj-btn-primary-start), 0.95), rgba(var(--tj-btn-primary-end), 0.86))'
+            : 'rgba(var(--tj-bg-secondary), 0.68)',
+          border: checked
+            ? '1px solid rgba(var(--tj-text-primary), var(--tj-edge))'
+            : '1px solid rgba(var(--tj-accent-primary), var(--tj-edge-tint))',
+          clipPath: smallClip,
         }}
       >
         <span
           className="absolute top-0.5 h-5 w-5 transition-transform"
           style={{
-            transform: checked ? 'translateX(22px)' : 'translateX(2px)',
-            background: 'rgb(var(--tj-text-primary))',
+            // 用 `left` 而不是 `transform`：按钮默认 text-align:center，
+            // 绝对定位元素在 left:auto 时会落到静态位置（居中），再叠加 transform 就会跑出轨道。
+            left: checked ? 'calc(100% - 1.375rem)' : '0.125rem',
+            background: checked ? 'rgb(var(--tj-bg-primary))' : 'rgba(var(--tj-text-secondary), 0.78)',
+            clipPath: tinyClip,
           }}
         />
       </button>

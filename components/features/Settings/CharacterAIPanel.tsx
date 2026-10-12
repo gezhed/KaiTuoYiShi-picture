@@ -1,6 +1,8 @@
 import { useMemo, useState } from 'react';
 import type { 角色卡, 角色部位字段, 文生图系统设置 } from '@/models/genSystem';
 import { 创建默认角色AI设置, 角色部位字段名 } from '@/models/genSystem';
+import type { API配置项 } from '@/models/settings';
+import type { ConnectionTestConfig } from '@/hooks/useAiTools';
 import { 人物生成默认提示词 } from '@/prompts/cot/characterFeaturePrompt';
 import {
   面板,
@@ -10,6 +12,7 @@ import {
   设置字段 as 字段,
   主按钮,
 } from '@/components/features/Settings/settingsPrimitives';
+import { LLM接口字段 } from './LlmEndpointFields';
 import { 部位字段标签 } from './CharacterSettingsEditor';
 import {
   合并生成字段,
@@ -35,6 +38,10 @@ export function CharacterAIPanel({
   on选择角色,
   写入角色,
   请求生成,
+  候选配置,
+  主API模型,
+  主API地址,
+  onFetchModels,
 }: {
   设置: 文生图系统设置;
   onPatch: (部分: Partial<文生图系统设置>) => void;
@@ -48,6 +55,11 @@ export function CharacterAIPanel({
     角色?: 角色卡;
     signal?: AbortSignal;
   }) => Promise<生成角色特征结果>;
+  /** 角色 AI 覆盖与主 API 合并后的实际配置，供「测试连接并读取模型列表」使用。 */
+  候选配置?: API配置项 | null;
+  主API模型?: string;
+  主API地址?: string;
+  onFetchModels?: (config: ConnectionTestConfig) => Promise<string[]>;
 }) {
   const [要求, set要求] = useState('');
   const [生成中, set生成中] = useState(false);
@@ -327,41 +339,14 @@ export function CharacterAIPanel({
             : '当前「文生图 LLM 预设」未启用；角色 AI 没填覆盖时会直接回退到主 API。'}
         />
 
-        <div className="grid gap-2 md:grid-cols-2">
-          <字段 label="接口覆盖：模型">
-            <input
-              className="kaituo-input w-full px-2 py-1.5 text-xs font-mono"
-              value={角色AI.API.model}
-              onChange={(事件) => onPatch({ 角色AI: { ...角色AI, API: { ...角色AI.API, model: 事件.target.value } } })}
-              placeholder="留空＝回退"
-            />
-          </字段>
-          <字段 label="接口覆盖：地址">
-            <input
-              className="kaituo-input w-full px-2 py-1.5 text-xs font-mono"
-              value={角色AI.API.baseUrl}
-              onChange={(事件) => onPatch({ 角色AI: { ...角色AI, API: { ...角色AI.API, baseUrl: 事件.target.value } } })}
-              placeholder="留空＝回退"
-            />
-          </字段>
-          <字段 label="接口覆盖：API Key">
-            <input
-              type="password"
-              className="kaituo-input w-full px-2 py-1.5 text-xs font-mono"
-              value={角色AI.API.apiKey}
-              onChange={(事件) => onPatch({ 角色AI: { ...角色AI, API: { ...角色AI.API, apiKey: 事件.target.value } } })}
-              placeholder="留空＝回退"
-            />
-          </字段>
-          <字段 label="接口覆盖：供应商" hint="留空或 openai_compatible 走 OpenAI 兼容协议。">
-            <input
-              className="kaituo-input w-full px-2 py-1.5 text-xs font-mono"
-              value={角色AI.API.provider}
-              onChange={(事件) => onPatch({ 角色AI: { ...角色AI, API: { ...角色AI.API, provider: 事件.target.value } } })}
-              placeholder="留空＝回退"
-            />
-          </字段>
-        </div>
+        <LLM接口字段
+          值={角色AI.API}
+          onPatch={(部分) => onPatch({ 角色AI: { ...角色AI, API: { ...角色AI.API, ...部分 } } })}
+          候选配置={候选配置}
+          主配置={{ model: 主API模型, baseUrl: 主API地址 }}
+          onFetchModels={onFetchModels}
+          名称="角色 AI"
+        />
       </面板>
     </div>
   );

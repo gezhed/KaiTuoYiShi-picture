@@ -181,6 +181,15 @@ describe('设置分区注册表', () => {
     expect(await screen.findByText('自检')).toBeInTheDocument();
     expect(screen.getByText(/文生图未启用/)).toBeInTheDocument();
   });
+
+  it('视觉设置里那段叫 galgame 模式，不再出现 AVG 字样', async () => {
+    render(<SettingsModal {...buildProps({ initialTab: 'visual' })} />);
+    expect(await screen.findByText('galgame 模式')).toBeInTheDocument();
+    expect(screen.getByText('启用 galgame 模式')).toBeInTheDocument();
+    // 机制名（逐段推进）继续出现在说明里，但「AVG」这个旧名字不该再冒出来。
+    expect(screen.getByText(/逐段推进/)).toBeInTheDocument();
+    expect(screen.queryByText(/AVG/)).toBeNull();
+  });
 });
 
 describe('子系统草稿语义', () => {

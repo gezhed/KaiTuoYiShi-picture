@@ -9,7 +9,7 @@ import { normalizeInlineSpeakerTags, shouldRenderAsNarrationForPlayerLine } from
 import { getBuiltinAvatarSetForNames } from '@/data/builtinAvatars';
 import { 解析相册资源引用 } from '@/utils/albumActions';
 import { AvatarImage } from '@/components/ui/ResilientImage';
-import { cardClip } from '@/components/ui/clipPaths';
+import { cardClip, smallClip } from '@/components/ui/clipPaths';
 import { 匹配锚点行 } from '@/services/ai/imageGen/illustrationProtocol';
 import { use逐段推进, 派生段落插图 } from './use逐段推进';
 
@@ -615,6 +615,9 @@ export function BodyBlock({ content, npcRecords, traveler, album, showInnerVoice
             color: 'rgba(var(--tj-text-secondary), 0.66)',
             background: 'rgba(var(--tj-accent-primary), 0.04)',
             border: '1px solid rgba(var(--tj-accent-primary), var(--tj-edge-tint-weak))',
+            // 和其它按钮一样带切角：正文里的操作按钮此前是仅剩的直角方块，
+            // galgame 模式下尤其显眼（用户报的「按钮显示 bug」之一）。
+            clipPath: smallClip,
           }}
         >
           {推进.段序号 >= 推进.段总数 - 1

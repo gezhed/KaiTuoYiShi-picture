@@ -1,5 +1,7 @@
 import { useMemo, useState } from 'react';
 import type { 角色卡, 文生图系统设置 } from '@/models/genSystem';
+import type { API配置项 } from '@/models/settings';
+import type { ConnectionTestConfig } from '@/hooks/useAiTools';
 import { 镜像启用列表 } from '@/models/genSystem';
 import {
   面板,
@@ -53,6 +55,10 @@ export function CharacterSettingsPanel({
   on追加目标变更,
   未保存,
   请求生成,
+  角色AI候选配置,
+  主API模型,
+  主API地址,
+  onFetchModels,
 }: {
   settings: 文生图系统设置;
   onPatch: (部分: Partial<文生图系统设置>) => void;
@@ -69,6 +75,11 @@ export function CharacterSettingsPanel({
     角色?: 角色卡;
     signal?: AbortSignal;
   }) => Promise<生成角色特征结果>;
+  /** 角色 AI 覆盖合并主 API 后的实际配置，供「测试连接并读取模型列表」使用。 */
+  角色AI候选配置?: API配置项 | null;
+  主API模型?: string;
+  主API地址?: string;
+  onFetchModels?: (config: ConnectionTestConfig) => Promise<string[]>;
 }) {
   const [页, set页] = useState<角色页签>('cards');
   const [选中Id, set选中Id] = useState<string>('');
@@ -440,6 +451,10 @@ export function CharacterSettingsPanel({
           on选择角色={set选中Id}
           写入角色={写入角色}
           请求生成={请求生成}
+          候选配置={角色AI候选配置}
+          主API模型={主API模型}
+          主API地址={主API地址}
+          onFetchModels={onFetchModels}
         />
       ) : null}
     </div>
