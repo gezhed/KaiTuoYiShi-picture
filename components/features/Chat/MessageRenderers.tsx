@@ -548,7 +548,7 @@ export function BodyBlock({ content, npcRecords, traveler, album, showInnerVoice
     <div ref={推进.容器引用}>
       {/* 固定在上方的当前插图：文字往下滚，它一直挂着，直到下一张图接管。 */}
       {固定插图Id ? (
-        <div className="mb-2">{renderIllustration?.(固定插图Id)}</div>
+        <div className="mb-2 flex justify-center">{renderIllustration?.(固定插图Id)}</div>
       ) : null}
       {lines.map((line, i) => {
         // 逐段推进：只渲染当前段的区间，其余整段不渲染（上一段自然消失）。

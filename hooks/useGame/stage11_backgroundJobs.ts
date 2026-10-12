@@ -77,6 +77,25 @@ interface NarrativeJobParams {
 }
 interface NarrativeJobResult { finalHistoryForSave: 聊天消息[]; 相册After?: 相册系统; }
 
+/**
+ * 正文自动配图的准入判断。
+ *
+ * 抽成纯函数是为了能直接测：它有三个条件（总开关、正文配图开关、模式是否为 auto），
+ * 任何一个不满足都会**静默返回**，用户看到的就是「自动生图模式没有去请求生图」。
+ * 所以这里除了给出结论，还要给出**原因**，让调用方把原因报到队列里，而不是让人猜。
+ */
+export function 判定正文配图门禁(
+  文生图系统: 文生图系统设置 | undefined,
+): { 放行: boolean; 原因?: string } {
+  if (!文生图系统) return { 放行: false, 原因: '还没有文生图系统设置。' };
+  if (!文生图系统.启用) return { 放行: false, 原因: '文生图总开关没有打开。' };
+  const 正文配图 = 文生图系统.正文配图;
+  if (!正文配图) return { 放行: false, 原因: '缺少正文配图设置。' };
+  if (!正文配图.启用) return { 放行: false, 原因: '「正文自动配图」没有打开。' };
+  if (正文配图.模式 !== 'auto') return { 放行: false, 原因: '正文配图当前是手动模式，自动生图不会触发。' };
+  return { 放行: true };
+}
+
 function 合并忆庭系统(base: 忆庭系统, override?: 忆庭系统): 忆庭系统 {
   if (!override) return base;
   const merged = [...base.回忆档案];
@@ -202,8 +221,14 @@ function runPhoneFallbackJob(p: PhoneJobParams): Promise<PhoneJobResult> {
 async function runNarrativeImageJob(p: NarrativeJobParams): Promise<NarrativeJobResult> {
   const fh = p.finalHistory;
   const 文生图系统 = p.state.deviceSettings.gameSettings.文生图系统 as 文生图系统设置 | undefined;
-  const 正文配图 = 文生图系统?.正文配图;
-  if (!文生图系统?.启用 || !正文配图?.启用 || 正文配图.模式 !== 'auto') return { finalHistoryForSave: fh };
+  const 门禁 = 判定正文配图门禁(文生图系统);
+  if (!门禁.放行) {
+    // 不静默返回：用户开了自动模式却在别处被拦下时，必须能看到被谁拦的。
+    pushQueueTask(p.state, 'narrative_image_parse', 'skipped', {
+      detail: `本回合未自动生图：${门禁.原因}`,
+    }, p.turnCountAtStart, p.queueTasksMirror);
+    return { finalHistoryForSave: fh };
+  }
   const targetMessageId = p.aiMsg.id;
 
   const 结果 = await 生成消息插图(p.state, targetMessageId, p.displayText, undefined, {

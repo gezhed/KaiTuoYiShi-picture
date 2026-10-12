@@ -122,16 +122,23 @@ describe('回合动作执行判定', () => {
       .toStrictEqual({ kind: 'ran' });
   });
 
-  it('忙时拒绝：按策略任务 id 与忙时文案给出结局', () => {
+  it('正文生图**不**受全局忙影响：变量结算期间也能出图', () => {
+    // busy 来自 loading || pendingVariable，而 pendingVariable 在整轮后台结算
+    // 期间一直是真（可能几分钟）。生图与变量结算互不依赖，不该陪着一起等。
     expect(评估回合动作执行(buildMessage(), 'regenerate_snapshot', buildContext({ busy: true })))
+      .toStrictEqual({ kind: 'ran' });
+  });
+
+  it('变量重解析仍然受全局忙限制（它会重写变量状态）', () => {
+    expect(评估回合动作执行(buildMessage(), 'reparse_variables', buildContext({ busy: true })))
       .toStrictEqual({
         kind: 'refused',
-        taskId: 'narrative_image_parse',
-        detail: '当前有任务进行中，请等待完成后再重新生成。',
+        taskId: 'variable_reparse',
+        detail: '当前有任务进行中，请等待完成后再重新解析。',
       });
   });
 
-  it('同动作已有未决任务时拒绝重复触发', () => {
+  it('同动作已有未决任务时拒绝重复触发（放开空闲要求后仍防连点）', () => {
     expect(评估回合动作执行(
       buildMessage(),
       'regenerate_snapshot',

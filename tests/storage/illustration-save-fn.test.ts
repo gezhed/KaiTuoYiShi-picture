@@ -22,6 +22,7 @@ import { seedDefaultWorkspace } from '../helpers/workspaceFixture';
 import { 保存插图结果, type 归档条目 } from '@/hooks/useGame/illustrationWorkflow';
 import { loadActiveLeaf, loadNewestStory } from '@/services/storage/saveTree';
 import { clearAlbumAssetObjectUrlCache, getAlbumAssetBlob, dataUrlToBlob } from '@/utils/albumObjectUrl';
+import { 暂存待落盘字节 } from '@/utils/pendingAssetBytes';
 import { 创建相册图片条目, 添加图片到相册, 解析相册资源引用 } from '@/utils/albumActions';
 import { 创建空相册系统 } from '@/models/imageGeneration';
 import type { 相册系统 } from '@/models/imageGeneration';
@@ -244,8 +245,10 @@ describe('保存插图结果（真实调用链）', () => {
         slot: 'scene',
       });
       相册 = 添加图片到相册(相册, { asset, entry });
-      // 与真实归档一致：归档当刻就把字节带在条目上，不依赖之后的缓存。
-      新增条目.push({ asset, entry, blob: dataUrlToBlob(源) ?? undefined });
+      // 与真实归档一致：归档当刻把字节存进旁路表，不依赖之后会被回收的展示缓存。
+      const 字节 = dataUrlToBlob(源);
+      if (字节) 暂存待落盘字节(asset.id, 字节);
+      新增条目.push({ asset, entry });
       插图列表.push({
         id: `nar_${i}`,
         dataUrl: `asset:${asset.id}`,
@@ -308,8 +311,43 @@ describe('保存插图结果（真实调用链）', () => {
     expect(助手?.narrativeImages?.[0].description).toBe('她推开了舱门。');
   });
 
-  it('活跃叶子指针存在（不然写到了别处，重进就找不到）', async () => {
+  it('被后续写入顶掉的插图能补回来（生图与变量结算并行时的竞态）', async () => {
     const harness = await createGameStateHarness();
+    await seedDefaultWorkspace();
+
+    const { 历史, 相册 } = 建带图内容();
+    await 保存插图结果(harness.state, 历史, 相册);
+
+    // 模拟变量结算用**较早**的 chatHistory 又写了一次活跃叶子：插图被顶掉。
+    const newest = await loadNewestStory();
+    if (!newest.headNodeId) throw new Error('缺少活跃叶子');
+    const { writeLeafNode } = await import('@/services/storage/saveTree');
+    const { cleanLeafPatch } = await import('@/hooks/useGame/workflowTransaction');
+    await writeLeafNode(newest.headNodeId, cleanLeafPatch({
+      chatHistory: [{
+        id: 'msg_rt',
+        role: 'assistant',
+        content: '她推开了舱门。',
+        parsedResponse: { body: '她推开了舱门。' },
+        // 结算那份快照里没有插图。
+        narrativeImages: [],
+      }] as unknown as 聊天消息[],
+    }));
+
+    const 被顶掉 = await loadActiveLeaf();
+    if (被顶掉.status !== 'ok') throw new Error('活跃叶子读取失败');
+    expect(被顶掉.leaf.chatHistory?.find((项) => 项.id === 'msg_rt')?.narrativeImages).toHaveLength(0);
+
+    // 再存一次同样的插图结果：写完后的回读补偿应把它补回来。
+    await 保存插图结果(harness.state, 历史, 相册);
+
+    const 修复后 = await loadActiveLeaf();
+    if (修复后.status !== 'ok') throw new Error('活跃叶子读取失败');
+    const 助手 = 修复后.leaf.chatHistory?.find((项) => 项.id === 'msg_rt');
+    expect(助手?.narrativeImages?.length, '被顶掉的插图没有被补回来').toBeGreaterThan(0);
+  });
+
+  it('活跃叶子指针存在（不然写到了别处，重进就找不到）', async () => {    const harness = await createGameStateHarness();
     await seedDefaultWorkspace();
 
     const { 历史, 相册 } = 建带图内容();

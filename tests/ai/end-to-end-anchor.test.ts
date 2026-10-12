@@ -1,12 +1,19 @@
 // 端到端：真实回复 → 解析 → 锚点能否在正文里匹配到。
 import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { dirname, resolve } from 'node:path';
 import { describe, it, expect } from 'vitest';
 import { 剥掉思维链 } from '@/services/ai/imageGen/illustrationAgent';
 import { 解析插图提示词, 剥掉内联插图 } from '@/services/ai/imageGen/illustrationProtocol';
 import { 解析插图锚点 } from '@/services/ai/imageGen/illustrationPipeline';
 import { 匹配锚点行 } from '@/services/ai/imageGen/illustrationProtocol';
 
-const 原文 = readFileSync('D:/AI/deepseek harness/work/诊断信息.txt', 'utf8').replace(/^LLM 原文：\n/, '');
+/*
+ * 夹具放在仓库内（tests/fixtures/），不要写死机器上的绝对路径：
+ * 原先指向工作区里的一个临时文件，工作区一挪动测试就整份报 ENOENT。
+ */
+const 夹具路径 = resolve(dirname(fileURLToPath(import.meta.url)), '../fixtures/real-reply-anchors.txt');
+const 原文 = readFileSync(夹具路径, 'utf8').replace(/^LLM 原文：\n/, '');
 const 选项 = { 开始标记: 'image###', 结束标记: '###', 回显思考: false };
 
 /** 模拟一段真实正文：含回复里那三句锚点。 */

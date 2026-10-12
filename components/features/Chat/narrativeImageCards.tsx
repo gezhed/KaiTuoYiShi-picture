@@ -142,10 +142,12 @@ export function NarrativeImageCard({
       {expanded && (
         <div className="space-y-2 px-3 pb-3">
           {imageSrc ? (
+            /* 居中：卡片本身铺满正文宽度，而图片是 `max-w-full` 的定宽元素，
+               不加 `mx-auto` 就一律贴左（AVG 模式下特别明显）。 */
             <img
               src={imageSrc}
               alt={image.description || typeLabel}
-              className="max-w-full rounded"
+              className="mx-auto block max-w-full rounded"
               style={{ maxHeight: '512px', objectFit: 'contain' }}
             />
           ) : (

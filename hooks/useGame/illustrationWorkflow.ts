@@ -8,8 +8,9 @@ import type { 传输诊断 } from '@/services/ai/imageGen/illustrationAgent';
 import { 思考工具声明, 默认工具名 } from '@/services/ai/imageGen/illustrationAgent';
 import { 创建相册图片条目, 添加图片到相册 } from '@/utils/albumActions';
 import { writeLeafNode } from '@/services/storage/saveTree';
-import { 读取已落盘资产记录, 写入已落盘资产记录 } from '@/services/storage/saveCrud';
+import { 读取已落盘资产记录, 写入已落盘资产记录, loadSave, loadSaveIdByNodeId } from '@/services/storage/saveCrud';
 import { getAlbumAssetBlob, dataUrlToBlob, rememberAlbumAssetBlob } from '@/utils/albumObjectUrl';
+import { 暂存待落盘字节, 取待落盘字节, 清理待落盘字节 } from '@/utils/pendingAssetBytes';
 import { cleanLeafPatch } from './workflowTransaction';
 import { ensureHeadLeafWritable } from './saveLoadWorkflow';
 import { devLog, devLogError } from '@/utils/devLog';
@@ -35,6 +36,9 @@ export interface 插图作业结果 {
    * 落盘时必须用它，**不能**回头去查内存里的资产缓存：
    * 那个缓存是可被回收的（`pruneAlbumAssetCache`），一旦在生成与落盘之间被清掉，
    * 就拿不到字节，于是写成一条空引用 —— 现象正是「只有还在缓存里的最后一张留下来了」。
+   *
+   * 注意这里是**条目的元数据**，不含字节：字节走 `utils/pendingAssetBytes`，
+   * 因为条目会进入存档与导出，而那条路径里有 JSON 往返，Blob 过一遍就没了。
    */
   新增条目: 归档条目[];
   提示词诊断?: string;
@@ -47,15 +51,6 @@ export interface 插图作业结果 {
 export interface 归档条目 {
   asset: import('@/models/imageGeneration').图片资源;
   entry: import('@/models/imageGeneration').相册条目;
-  /**
-   * 归档那一刻的图片字节。
-   *
-   * 必须在这里带着走：相册里存的只是 `asset:<id>` 引用，而字节放在
-   * 一个**可被回收**的内存缓存里（`pruneAlbumAssetCache` 会清）。落盘发生在
-   * 「全部出完图」之后，中间任何一次回收都会让早先几张的字节取不到，
-   * 结果只有最后一张留在缓存里能被写进去 —— 这正是「四张只保住一张」的成因。
-   */
-  blob?: Blob;
 }
 
 function 取LLM配置(设置: 游戏设置, apiSettings: UseGameStateReturn['deviceSettings']['apiSettings']): API配置项 | null {
@@ -201,10 +196,14 @@ export function 构造插图依赖(
         backend: 'comfyui',
         tags: ['正文插图'],
       });
-      // 立刻把字节抓在手里：缓存随时可能被回收，而落盘要等所有图都出完。
+      // 立刻把字节抓在手里：展示缓存随时可能被回收，而落盘要等所有图都出完。
+      // 存进旁路表而**不是**塞进条目 —— 条目会进存档，Blob 过 JSON 往返会变成 {}。
       const 字节 = getAlbumAssetBlob(条目.asset.id) ?? dataUrlToBlob(引用) ?? undefined;
-      if (字节) rememberAlbumAssetBlob(条目.asset.id, 字节, 条目.asset.mimeType || 字节.type);
-      onAlbumItem({ ...条目, blob: 字节 });
+      if (字节) {
+        rememberAlbumAssetBlob(条目.asset.id, 字节, 条目.asset.mimeType || 字节.type);
+        暂存待落盘字节(条目.asset.id, 字节);
+      }
+      onAlbumItem(条目);
       return { 数据地址: `asset:${条目.asset.id}` };
     },
   };
@@ -271,8 +270,9 @@ export interface 插图落盘报告 {
 async function 落盘归档资产(条目列表: 归档条目[]): Promise<void> {
   const 记录列表: import('@/utils/saveAssetStorage').SaveAssetRecord[] = [];
   for (const 条目 of 条目列表) {
-    // 优先用归档时抓下来的字节；缓存里可能已经被回收了。
-    const blob = 条目.blob ?? getAlbumAssetBlob(条目.asset.id);
+    // 先取旁路暂存的字节（归档当刻抓下来的，不会被 prune 回收）；
+    // 再退回展示缓存，兼容老路径。
+    const blob = 取待落盘字节(条目.asset.id) ?? getAlbumAssetBlob(条目.asset.id);
     if (!blob) continue;
     记录列表.push({
       id: 条目.asset.id,
@@ -286,6 +286,49 @@ async function 落盘归档资产(条目列表: 归档条目[]): Promise<void> {
   }
   if (记录列表.length === 0) return;
   await 写入已落盘资产记录(记录列表);
+}
+
+/**
+ * 回读活跃叶子，把被后续写入顶掉的插图补回去。
+ *
+ * 为什么需要：变量结算在 `turnTail` 里会用它自己那份**较早**的 `chatHistory`
+ * 再写一次叶子。生图现在允许与结算并行，于是结算的写入可能把刚落盘的插图
+ * 从存档里抹掉 —— 内存里还在，重新进入就没了（用户报过「图消失」）。
+ *
+ * 只补 `narrativeImages`、只碰存进去时确实带了插图的那些消息，不动其它字段，
+ * 因此不会与结算互相覆盖。返回补了几条消息。
+ */
+async function 补齐被覆盖的插图(
+  headNodeId: string,
+ 期望历史: 聊天消息[],
+  相册: 相册系统,
+): Promise<number> {
+  try {
+    const saveId = await loadSaveIdByNodeId(headNodeId);
+    if (!saveId) return 0;
+    const 已存 = await loadSave(saveId);
+    const 已存历史 = 已存?.chatHistory;
+    if (!已存历史 || 已存历史.length === 0) return 0;
+
+    const 期望表 = new Map(期望历史.map((项) => [项.id, 项.narrativeImages ?? []]));
+    let 修复 = 0;
+    const 合并后 = 已存历史.map((项) => {
+      const 应有 = 期望表.get(项.id);
+      // 只有「本次存进去时带了图、但现在存库里没有」才算被顶掉。
+      if (!应有 || 应有.length === 0) return 项;
+      if ((项.narrativeImages?.length ?? 0) >= 应有.length) return 项;
+      修复 += 1;
+      return { ...项, narrativeImages: 应有 };
+    });
+    if (修复 === 0) return 0;
+
+    await writeLeafNode(headNodeId, cleanLeafPatch({ chatHistory: 合并后, 相册 }));
+    return 修复;
+  } catch (错误) {
+    // 补偿失败不该把已经出好的图从界面上抹掉，只记日志。
+    devLogError('save', 'illustration-clobber-repair-failed', 错误);
+    return 0;
+  }
 }
 
 export async function 保存插图结果(
@@ -328,6 +371,10 @@ export async function 保存插图结果(
     }
     await writeLeafNode(newest.headNodeId, cleanLeafPatch({ chatHistory: 下一份历史, 相册 }));
 
+    // 写完后回读补偿：变量结算可能用较早的 chatHistory 把刚落的插图顶掉。
+    const 补偿 = await 补齐被覆盖的插图(newest.headNodeId, 下一份历史, 相册);
+    if (补偿 > 0) devLog('save', 'illustration-clobber-repair', { 修复消息数: 补偿 });
+
     // 回读校验：直接从 IndexedDB 取，不看内存缓存，取到字节才算真的落盘。
     const 记录表 = await 读取已落盘资产记录([...目标资产]);
     let 确认 = 0;
@@ -335,6 +382,13 @@ export async function 保存插图结果(
       const 记录 = 记录表.get(id);
       if (记录?.blob instanceof Blob && 记录.blob.size > 0) 确认 += 1;
     }
+
+    // 已经确认落盘的字节不必再占着旁路表，否则同一次会话里会一直累积。
+    const 确认落盘的 = [...目标资产].filter((id) => {
+      const 记录 = 记录表.get(id);
+      return 记录?.blob instanceof Blob && 记录.blob.size > 0;
+    });
+    清理待落盘字节(确认落盘的);
 
     devLog('save', 'illustration-leaf-write', {
       nodeId: newest.headNodeId,

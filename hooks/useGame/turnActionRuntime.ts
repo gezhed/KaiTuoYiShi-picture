@@ -15,12 +15,23 @@ export const 回合动作策略表: Record<回合动作ID, 回合动作策略> =
     id: 'regenerate_snapshot',
     taskIds: ['narrative_image_parse', 'narrative_image_generate'],
     retryable: true,
-    requiresIdle: true,
+    /*
+     * 正文生图**不要求全局空闲**。
+     *
+     * `busy` 的来源是 `activeWorkflow.loading || activeWorkflow.pendingVariable`，
+     * 而 `pendingVariable` 在正文落地后就被置真、直到整轮后台结算（记忆 / 变量 /
+     * 自动配图…）全部跑完才复位，可能持续几分钟。生图与变量结算互不依赖，
+     * 让它陪着一起等，用户看到的就是「点生图 → 报错说任务进行中」。
+     *
+     * 重复触发仍由下面的「同动作已有未决任务」拦着，所以放开这里不会点两次出两批图。
+     */
+    requiresIdle: false,
   },
   reparse_variables: {
     id: 'reparse_variables',
     taskIds: ['variable_reparse'],
     retryable: false,
+    // 变量重解析会重写变量状态，必须等前台与后台结算都停下来，否则写入会交错。
     requiresIdle: true,
   },
 };

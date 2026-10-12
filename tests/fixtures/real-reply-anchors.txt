@@ -1,0 +1,21 @@
+<thinking>
+我需要为正文里的三个画面各写一条插图提示词。先确认正文中适合作为挂载点的句子，
+再按预设要求输出 image###...### 与尺寸。
+</thinking>
+<images>
+<image>
+<regex>舷窗外，原本静谧的星海被几道暗红色的高能轨迹骤然撕裂。</regex>
+<size>960*1280</size>
+<prompts>sāfe&masterpiece, best quality, 1girl, solo, star sea torn by dark red high-energy trails, spaceship window, wide shot</prompts>
+</image>
+<image>
+<regex>走廊两侧的常态冷白照明在两秒内悉数熄灭，取而代之的是自顶棚压下的暗橙色应急警示光带。</regex>
+<size>1024*1024</size>
+<prompts>sāfe&masterpiece, best quality, 1girl, solo, corridor, emergency amber lighting strips, lights out, medium shot</prompts>
+</image>
+<image>
+<regex>白色的冷却剂蒸汽正从缝隙中嘶嘶喷涌，隐约能看见通道内部幽暗曲折的金属走线。</regex>
+<size>960*1280</size>
+<prompts>sāfe&masterpiece, best quality, 1girl, solo, white coolant steam bursting from a seam, dim twisted metal conduits, close shot</prompts>
+</image>
+</images>
