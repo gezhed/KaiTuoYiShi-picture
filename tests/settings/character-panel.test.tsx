@@ -220,6 +220,68 @@ describe('角色管理面板', () => {
     expect(screen.getByText('（空回复）')).toBeInTheDocument();
   });
 
+  it('生成的值可以在写回前改：改过的内容才是落盘的内容', async () => {
+    const 捕获: { 系统?: 文生图系统设置 } = {};
+    const 请求生成 = vi.fn(async (): Promise<生成角色特征结果> => ({
+      字段: { characterTraits: 'silver hair（银色长发）', facialFeatures: 'green eyes（绿色眼睛）' },
+      服装: [],
+      未识别: [],
+      原始回复: '<人物>…</人物>',
+      重试次数: 0,
+    }));
+    render(<TestShell 初始={建系统()} 请求生成={请求生成} on系统={(系统) => { 捕获.系统 = 系统; }} />);
+    fireEvent.click(screen.getByRole('button', { name: /生成/ }));
+    const 要求框 = await screen.findByPlaceholderText(/流萤，星核猎手少女/);
+    fireEvent.change(要求框, { target: { value: '流萤' } });
+    fireEvent.click(screen.getByText('一键生成'));
+
+    // 「角色特征」的生成值放在可编辑的 textarea 里，直接改。
+    const 特征框 = await screen.findByDisplayValue('silver hair（银色长发）');
+    fireEvent.change(特征框, { target: { value: 'short silver hair（银色短发）' } });
+    expect(await screen.findByText('已手工修改')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByText('写入角色卡'));
+    await waitFor(() => {
+      expect(捕获.系统?.角色卡.char_1.characterTraits).toBe('short silver hair（银色短发）');
+    });
+    // 没改过的字段照旧写生成值。
+    expect(捕获.系统?.角色卡.char_1.facialFeatures).toBe('green eyes（绿色眼睛）');
+  });
+
+  it('可以直接新建角色卡：生成后写入会建一张新卡并挂进启用列表', async () => {
+    const 捕获: { 系统?: 文生图系统设置 } = {};
+    const 请求生成 = vi.fn(async (): Promise<生成角色特征结果> => ({
+      字段: { nameCN: '花火', characterTraits: 'pink hair（粉色头发）' },
+      服装: [],
+      未识别: [],
+      原始回复: '<人物>…</人物>',
+      重试次数: 0,
+    }));
+    render(<TestShell 初始={建系统()} 请求生成={请求生成} on系统={(系统) => { 捕获.系统 = 系统; }} />);
+    fireEvent.click(screen.getByRole('button', { name: /生成/ }));
+
+    // 目标下拉里选「＋ 新建角色卡」→ 出现卡名输入框。
+    const 下拉 = await screen.findByRole('combobox', { name: '目标角色卡' });
+    fireEvent.change(下拉, { target: { value: '__新建__' } });
+    const 名称框 = await screen.findByPlaceholderText('例：流萤');
+    fireEvent.change(名称框, { target: { value: '花火' } });
+
+    const 要求框 = screen.getByPlaceholderText(/流萤，星核猎手少女/);
+    fireEvent.change(要求框, { target: { value: '花火，假面愚人' } });
+    fireEvent.click(screen.getByText('一键生成'));
+    await screen.findByDisplayValue('pink hair（粉色头发）');
+    fireEvent.click(screen.getByText(/新建角色卡.*并写入/));
+
+    await waitFor(() => {
+      expect(Object.keys(捕获.系统?.角色卡 ?? {})).toHaveLength(2);
+    });
+    const 新卡 = Object.values(捕获.系统?.角色卡 ?? {}).find((卡) => 卡.nameCN === '花火');
+    expect(新卡).toBeDefined();
+    expect(新卡?.characterTraits).toBe('pink hair（粉色头发）');
+    // 必须同时进当前启用列表，否则正文生图永远看不到这张卡。
+    expect(捕获.系统?.角色启用列表).toContain(新卡?.id);
+  });
+
   it('注入模板页签列出四套内置方案与模板正文', async () => {
     render(<TestShell 初始={建系统()} />);
     fireEvent.click(screen.getByRole('button', { name: /注入模板/ }));
