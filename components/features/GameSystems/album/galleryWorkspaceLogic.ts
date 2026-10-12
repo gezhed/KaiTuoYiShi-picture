@@ -18,8 +18,8 @@ import type { 角色数据结构 } from '@/models/character';
 import { 读取NPC头像 } from '@/models/npc';
 import type { NPC记录 } from '@/models/npc';
 import { isCharacterLibrarySlot, 读取图片参考目标 } from '@/models/imageGeneration';
-import type { 相册条目, 相册系统 } from '@/models/imageGeneration';
-import { 解析相册资源地址, 解析相册资源引用 } from '@/utils/albumActions';
+import type { 相册条目, 相册系统, 图片资源 } from '@/models/imageGeneration';
+import { 创建相册图片条目, 解析相册资源地址, 解析相册资源引用 } from '@/utils/albumActions';
 import { revokeAlbumAssets } from '@/utils/albumObjectUrl';
 import { getBuiltinAvatarSet, getBuiltinAvatarSetForNames } from '@/data/builtinAvatars';
 import { matchCanonical } from '@/data/canonicalCharacters';
@@ -349,8 +349,45 @@ export function findNpcCanonicalName(npc: NPC记录): string | undefined {
   return undefined;
 }
 
-/** 图库条目的排序键：内置头像排前面（它们最像「原始头像」），其余按时间倒序。 */
-export function sortGalleryEntries(entries: CharacterLibraryEntry[]): CharacterLibraryEntry[] {
+/**
+ * 本地文件名去掉扩展名当标题；空名字兜一个占位。
+ *
+ * 单独出来是为了能直接测：导入的标题会进图库卡片与预览标题。
+ */
+export function 标题去后缀(文件名: string): string {
+  const 去后缀 = 文件名.replace(/\.[a-z0-9]+$/i, '').trim();
+  return 去后缀 || '本地导入';
+}
+
+/**
+ * 由一张已经读成 data URL 的本地图片构造待导入的相册条目。
+ *
+ * 归属按当前选中的角色给：没有 targetId 的条目会在每个角色的图库列表里
+ * 都出现（旧版的坑），所以这里强制带上。
+ */
+export function buildImportedImageItem(参数: {
+  标题?: string;
+  数据地址: string;
+  文件名?: string;
+  mimeType?: string;
+  归属: { id: string; kind: 'traveler' | 'npc'; name?: string };
+}): { asset: 图片资源; entry: 相册条目 } {
+  const 标题 = 参数.标题?.trim() || (参数.文件名 ? 标题去后缀(参数.文件名) : '本地导入');
+  const 归属 = 参数.归属;
+  return 创建相册图片条目({
+    title: 标题,
+    src: 参数.数据地址,
+    source: 'upload',
+    targetType: 归属.kind === 'traveler' ? 'traveler' : 'npc',
+    targetId: 归属.kind === 'traveler' ? 'traveler' : 归属.id,
+    slot: 'avatar_profile',
+    mimeType: 参数.mimeType,
+    tags: ['本地导入', '档案头像'],
+    note: '从本地文件导入',
+  });
+}
+
+/** 图库条目的排序键：内置头像排前面（它们最像「原始头像」），其余按时间倒序。 */export function sortGalleryEntries(entries: CharacterLibraryEntry[]): CharacterLibraryEntry[] {
   return [...entries].sort((a, b) => {
     const aBuiltin = a.entry.id.startsWith('builtin-avatar:') ? 0 : 1;
     const bBuiltin = b.entry.id.startsWith('builtin-avatar:') ? 0 : 1;

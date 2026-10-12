@@ -8,6 +8,7 @@ import { 读取NPC头像 } from '@/models/npc';
 import {
   buildAssetMap,
   buildCharacterLibraryRecords,
+  buildImportedImageItem,
   buildSceneLibraryEntries,
   buildVisibleCharacterEntries,
   cleanupAlbumAssets,
@@ -21,7 +22,8 @@ import {
 } from './galleryWorkspaceLogic';
 import { EmptyLibraryBox, ImagePreviewModal, Panel, SafeAlbumImage } from './workspaceComponents';
 import { cardClip, smallClip } from '@/components/ui/clipPaths';
-import { 解析相册资源引用 } from '@/utils/albumActions';
+import { 提示条 } from '@/components/features/Settings/settingsPrimitives';
+import { 添加图片到相册, 解析相册资源引用, fileToDataUrl } from '@/utils/albumActions';
 import type { AlbumImportMode } from './albumArchive';
 
 /** 图库左侧筛选项：角色库 + 三类场景库。 */
@@ -87,6 +89,8 @@ export function GalleryWorkspace({
   const [批量模式, set批量模式] = useState(false);
   const [多选, set多选] = useState<string[]>([]);
   const [预览打开, set预览打开] = useState(false);
+  const [导入提示, set导入提示] = useState<{ kind: 'info' | 'ok' | 'error'; text: string } | null>(null);
+  const 图片文件 = useRef<HTMLInputElement | null>(null);
   const 导入文件 = useRef<HTMLInputElement | null>(null);
   const 导入模式 = useRef<AlbumImportMode>('merge');
 
@@ -97,6 +101,8 @@ export function GalleryWorkspace({
   );
   const sceneEntries = useMemo(() => buildSceneLibraryEntries(album, assetMap), [album, assetMap]);
   const 活跃记录 = records.find((record) => record.id === 选中角色) ?? records[0];
+  /** 本地导入的图片归到当前选中的角色名下。 */
+  const 导入归属 = 活跃记录;
   const 角色条目 = useMemo(
     () => sortGalleryEntries(buildVisibleCharacterEntries(活跃记录, 角色资源条目(album), album)),
     [活跃记录, album],
@@ -149,6 +155,49 @@ export function GalleryWorkspace({
     if (mode === 'replace' && !window.confirm('覆盖恢复会替换当前相册中的全部资源与任务。确认继续吗？')) return;
     导入模式.current = mode;
     导入文件.current?.click();
+  };
+
+  /**
+   * 导入本地图片。
+   *
+   * 旧版有「导入参考图」，但它只做导入参考图这一件事；图库这边既没有单图导入，
+   * 也没有普通图片的入口——导入按钮只认 ZIP 备份，想放一张存稿进图库是做不到的。
+   *
+   * 归属按当前选中的角色给：在角色筛选下导入的图直接落到该角色名下，
+   * 否则会变成一张没有归属的条目，在每个角色的图库列表里都出现（旧版的坑）。
+   */
+  const 处理导入图片 = async (选择结果: FileList | null) => {
+    // 必须先拷成数组：调用方紧接着会清空 input，而清空会把 FileList 一起清掉
+    // （`input.value = ''` 之后 `files` 就空了），异步循环里再读就一张都拿不到。
+    const 列表 = Array.from(选择结果 ?? []);
+    if (列表.length === 0) return;
+    set导入提示({ kind: 'info', text: `正在导入 ${列表.length} 张图片…` });
+    let 下一个 = album;
+    let 成功 = 0;
+    const 失败原因: string[] = [];
+    for (const 文件 of 列表) {
+      try {
+        const 数据地址 = await 文件转数据地址(文件);
+        const 条目 = buildImportedImageItem({
+          数据地址,
+          文件名: 文件.name,
+          mimeType: 文件.type || undefined,
+          归属: 导入归属,
+        });
+        下一个 = 添加图片到相册(下一个, 条目);
+        成功 += 1;
+      } catch (错误) {
+        失败原因.push(`${文件.name}：${错误 instanceof Error ? 错误.message : String(错误)}`);
+      }
+    }
+    if (成功 > 0) onAlbumChange(下一个);
+    const 归属文本 = 导入归属.kind === 'traveler' ? '旅人' : `${导入归属.name}（伙伴）`;
+    set导入提示({
+      kind: 失败原因.length > 0 ? 'error' : 'ok',
+      text: 失败原因.length > 0
+        ? `导入 ${成功} 张成功，${失败原因.length} 张失败：${失败原因.join('；')}`
+        : `已导入 ${成功} 张到「${归属文本}」名下。选中一张再点「设置到槽位」即可挂到其他槽位。`,
+    });
   };
 
   const 显示预览 = () => {
@@ -237,6 +286,18 @@ export function GalleryWorkspace({
             </div>
             <div className="flex flex-wrap gap-2">
               <input
+                ref={图片文件}
+                type="file"
+                accept="image/*"
+                multiple
+                className="hidden"
+                onChange={(事件) => {
+                  const input = 事件.currentTarget;
+                  void 处理导入图片(input.files);
+                  input.value = '';
+                }}
+              />
+              <input
                 ref={导入文件}
                 type="file"
                 accept="application/zip,.zip,application/json,.json"
@@ -247,14 +308,26 @@ export function GalleryWorkspace({
                   input.value = '';
                 }}
               />
+              <图库按钮
+                disabled={operationBusy}
+                primary
+                onClick={() => 图片文件.current?.click()}
+              >
+                导入本地图片
+              </图库按钮>
+              <图库按钮 disabled={operationBusy} onClick={() => 触发导入('merge')}>导入备份</图库按钮>
               <图库按钮 disabled={operationBusy} onClick={() => 触发导入('replace')}>覆盖恢复</图库按钮>
-              <图库按钮 disabled={operationBusy} onClick={() => 触发导入('merge')}>导入</图库按钮>
               <图库按钮 disabled={operationBusy} onClick={onExport}>导出</图库按钮>
               {onOpenAvatarEditor && (
-                <图库按钮 primary onClick={() => onOpenAvatarEditor(活跃记录)}>生成/更换头像</图库按钮>
+                <图库按钮 onClick={() => onOpenAvatarEditor(活跃记录)}>生成/更换头像</图库按钮>
               )}
             </div>
           </div>
+          <div className="text-[11px] leading-relaxed" style={{ color: 'rgba(var(--tj-ui-muted),0.7)' }}>
+            「导入本地图片」把本地文件归档到 {筛选 === 'character' ? `「${活跃记录.name}」名下` : `「${筛选项.find((项) => 项.id === 筛选)?.label}」名下`}；
+            「导入备份 / 覆盖恢复」用于本项目导出的 ZIP 相册备份。
+          </div>
+          {导入提示 ? <提示条 kind={导入提示.kind} text={导入提示.text} /> : null}
           <div className="grid gap-2 sm:grid-cols-4">
             <图库按钮 disabled={!选中项?.src} onClick={显示预览}>图片预览</图库按钮>
             <图库按钮
@@ -366,6 +439,13 @@ function 角色资源条目(album: 相册系统) {
   return album.entries
     .filter((entry) => entry.targetType === 'traveler' || entry.targetType === 'npc')
     .map((entry) => ({ entry, src: 解析相册资源引用(album, `asset:${entry.assetId}`) || '' }));
+}
+
+/** 读本地图片为 data URL；大小上限与相册导入一致（12MB）。 */
+async function 文件转数据地址(文件: File): Promise<string> {
+  const 数据地址 = await fileToDataUrl(文件);
+  if (!数据地址) throw new Error('读取到的内容为空');
+  return 数据地址;
 }
 
 function 图库按钮({

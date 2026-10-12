@@ -6,10 +6,12 @@ import { 计算挂载结果, 槽位键转目标 } from '@/utils/avatarActions';
 import {
   buildAssetMap,
   buildCharacterLibraryRecords,
+  buildImportedImageItem,
   buildVisibleCharacterEntries,
   classifySceneLibraryEntry,
   cleanupAlbumAssets,
   sortGalleryEntries,
+  标题去后缀,
 } from '@/components/features/GameSystems/album/galleryWorkspaceLogic';
 import { albumAssetMapOf, makeAlbumAsset, makeAlbumEntry, registerAlbumCacheTeardown } from '../helpers/albumFixture';
 
@@ -113,6 +115,48 @@ describe('图库投影', () => {
 
     const 清理后 = cleanupAlbumAssets(album);
     expect(清理后.assets.map((资源) => 资源.id)).toEqual(['asset-keep']);
+  });
+});
+
+describe('本地图片导入', () => {
+  it('归属绑到目标角色，保证不会出现在每个角色的图库列表里', () => {
+    const { traveler, npc, album } = 建设场景();
+    const 条目 = buildImportedImageItem({
+      数据地址: 'data:image/png;base64,AAAA',
+      文件名: 'my-avatar.png',
+      归属: { id: npc.id, kind: 'npc', name: npc.姓名 },
+    });
+    const 导入后 = { ...album, assets: [条目.asset, ...album.assets], entries: [条目.entry, ...album.entries] };
+
+    const records = buildCharacterLibraryRecords(traveler, [npc], 导入后, buildAssetMap(导入后), true);
+    const 伙伴记录 = records.find((记录) => 记录.id === npc.id);
+    const 旅人记录 = records.find((记录) => 记录.id === 'traveler');
+    expect(伙伴记录?.entries.map((项) => 项.entry.id)).toContain(条目.entry.id);
+    expect(旅人记录?.entries.map((项) => 项.entry.id)).not.toContain(条目.entry.id);
+  });
+
+  it('旅人导入写 traveler 归属与档案头像槽位', () => {
+    const 条目 = buildImportedImageItem({
+      数据地址: 'data:image/png;base64,AAAA',
+      文件名: '旅人.png',
+      归属: { id: 'traveler', kind: 'traveler' },
+    });
+
+    expect(条目.entry.targetType).toBe('traveler');
+    expect(条目.entry.targetId).toBe('traveler');
+    expect(条目.entry.slot).toBe('avatar_profile');
+    expect(条目.asset.source).toBe('upload');
+    expect(条目.entry.tags).toContain('本地导入');
+  });
+
+  it('标题取文件名去扩展名，空名字有兜底', () => {
+    expect(标题去后缀('头像-01.webp')).toBe('头像-01');
+    expect(标题去后缀('   ')).toBe('本地导入');
+    const 兜底 = buildImportedImageItem({
+      数据地址: 'data:image/png;base64,AAAA',
+      归属: { id: 'traveler', kind: 'traveler' },
+    });
+    expect(兜底.entry.title).toBe('本地导入');
   });
 });
 
