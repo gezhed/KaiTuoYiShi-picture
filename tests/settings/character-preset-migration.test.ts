@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { 归一化文生图系统设置 } from '@/models/settings';
+import { 人物生成默认提示词 } from '@/prompts/cot/characterFeaturePrompt';
 import {
   默认启用预设名,
   默认通用角色列表名,
@@ -93,27 +94,61 @@ describe('归一化文生图系统设置：通用列表与注入模板', () => {
 });
 
 describe('归一化文生图系统设置：角色 AI', () => {
-  it('默认提示词就是「人物生成」', () => {
+  it('默认消息序列带破甲与两套格式规格，讨论模式默认停用', () => {
     const 设置 = 归一化文生图系统设置(undefined);
-    expect(设置.角色AI.提示词).toContain('<人物>');
-    expect(设置.角色AI.提示词).toContain('上半身SFW');
-    expect(设置.角色AI.提示词).toContain('下半身NSFW背面');
-    expect(设置.角色AI.最大输出).toBeGreaterThanOrEqual(2048);
+    const 消息 = 设置.角色AI.消息;
+    expect(消息.length).toBeGreaterThanOrEqual(8);
+    const 启用 = 消息.filter((项) => 项.enabled !== false);
+    const 文本 = 启用.map((项) => 项.content).join('\n');
+    expect(文本).toContain('小克:头好疼，我是谁？');
+    expect(文本).toContain('<人物>');
+    expect(文本).toContain('上半身SFW');
+    expect(文本).toContain('下半身NSFW背面');
+    expect(文本).toContain('<服装>');
+    expect(消息.find((项) => 项.id === 'discuss-mode')?.enabled).toBe(false);
+    expect(设置.角色AI.最大输出).toBeGreaterThanOrEqual(8192);
+    expect(设置.角色AI.重试次数).toBeGreaterThanOrEqual(0);
+  });
+
+  it('旧存档的单条提示词：没改过就丢弃（默认序列已含同一条）', () => {
+    const 设置 = 归一化文生图系统设置({
+      角色AI: { 提示词: 人物生成默认提示词 } as never,
+    });
+    expect(设置.角色AI.附加要求).toBe('');
+    expect(设置.角色AI.消息.length).toBeGreaterThanOrEqual(8);
+  });
+
+  it('旧存档的单条提示词：改过就当作附加要求保留', () => {
+    const 设置 = 归一化文生图系统设置({
+      角色AI: { 提示词: '我自己写的规格：只写 SFW 字段' } as never,
+    });
+    expect(设置.角色AI.附加要求).toBe('我自己写的规格：只写 SFW 字段');
+  });
+
+  it('消息序列会被裁剪：空内容丢掉、未知 role 退回 system', () => {
+    const 设置 = 归一化文生图系统设置({
+      角色AI: {
+        消息: [
+          { id: 'a', role: '乱写', content: '内容 A', enabled: true },
+          { id: 'b', role: 'user', content: '   ', enabled: true },
+          { id: 'c', role: 'assistant', content: '内容 C', enabled: false },
+        ],
+      } as never,
+    });
+    expect(设置.角色AI.消息).toHaveLength(2);
+    expect(设置.角色AI.消息[0].role).toBe('system');
+    expect(设置.角色AI.消息[1]).toMatchObject({ role: 'assistant', content: '内容 C', enabled: false });
   });
 
   it('旧存档的部分字段缺失时逐项回退，不会留下半截对象', () => {
-    const 设置 = 归一化文生图系统设置({
-      角色AI: { 温度: 0.3 } as never,
-    });
+    const 设置 = 归一化文生图系统设置({ 角色AI: { 温度: 0.3 } as never });
     expect(设置.角色AI.温度).toBe(0.3);
     expect(设置.角色AI.API).toEqual({ provider: '', baseUrl: '', apiKey: '', model: '' });
-    expect(设置.角色AI.提示词.length).toBeGreaterThan(0);
+    expect(设置.角色AI.消息.length).toBeGreaterThan(0);
   });
 
   it('API 覆盖字段合并保留', () => {
-    const 设置 = 归一化文生图系统设置({
-      角色AI: { API: { model: 'gpt-x' } } as never,
-    });
+    const 设置 = 归一化文生图系统设置({ 角色AI: { API: { model: 'gpt-x' } } as never });
     expect(设置.角色AI.API.model).toBe('gpt-x');
     expect(设置.角色AI.API.baseUrl).toBe('');
   });

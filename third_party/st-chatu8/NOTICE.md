@@ -52,10 +52,14 @@ under the Aladdin Free Public License, version 9 (AFPL), **at no charge**.
 `utils/settings/character/injectionTemplates.js` 的 `SYSTEM_INJECTION_TEMPLATES`（L29634–L29755）。
 
 `prompts/cot/characterFeaturePrompt.ts` 的提示词来自用户提供的 `人物生成.json`
-（SillyTavern 完成预设导出）中 `identifier="nsfw"` / `name="角色设计"` 的那一条；
-它是对上游 `characterAI.systemPrompt` 那句占位说明的替换，不是 st-chatu8 的资产。
+（SillyTavern 完成预设导出）中**角色卡那一组**（`prompt_order[1]`）启用的全部块：
+`初始化`（破甲对话）、`story framework` 开/合、`enhanceDefinitions`、`main`（user人设）、
+`nsfw`（角色设计）、`51243bcb-…`（服装风格）、`fefe687e-…`（服装风格高质量，默认停用）。
+它们是对上游 `characterAI.systemPrompt` 那句占位说明的替换，不是 st-chatu8 的资产。
 该文件不是上游代码，因此不受 AFPL 约束；在此登记只为说明「一键生成角色特征」
-的提示词来源与改动点（见文件头注释）。
+的提示词来源与四处适应性修改（载入噪声、`{{lastuserMessage}}`、补「角色特征」行与收口指令、
+行尾归一），详见文件头注释。
+`models/genSystem.ts` 的 `创建默认角色AI消息()` 按同一顺序把它们组装成默认消息序列。
 
 ### 1.2 各文件的修改声明
 

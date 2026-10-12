@@ -1,9 +1,8 @@
 import { useMemo, useState } from 'react';
-import type { 角色卡, 角色部位字段, 文生图系统设置 } from '@/models/genSystem';
-import { 创建默认角色AI设置, 角色部位字段名 } from '@/models/genSystem';
+import type { 角色AI消息, 角色卡, 角色部位字段, 文生图系统设置 } from '@/models/genSystem';
+import { 创建默认角色AI设置, 创建默认角色AI消息, 角色部位字段名 } from '@/models/genSystem';
 import type { API配置项 } from '@/models/settings';
 import type { ConnectionTestConfig } from '@/hooks/useAiTools';
-import { 人物生成默认提示词 } from '@/prompts/cot/characterFeaturePrompt';
 import {
   面板,
   提示条,
@@ -65,6 +64,7 @@ export function CharacterAIPanel({
   const [生成中, set生成中] = useState(false);
   const [结果, set结果] = useState<生成角色特征结果 | null>(null);
   const [错误, set错误] = useState('');
+  const [提示, set提示] = useState('');
   const [勾选字段, set勾选字段] = useState<Set<keyof 角色部位字段>>(new Set());
   const [勾选服装, set勾选服装] = useState<Set<number>>(new Set());
   const [显示原始回复, set显示原始回复] = useState(false);
@@ -97,6 +97,7 @@ export function CharacterAIPanel({
       return;
     }
     set错误('');
+    set提示('');
     set结果(null);
     set生成中(true);
     try {
@@ -107,7 +108,13 @@ export function CharacterAIPanel({
       set勾选服装(new Set(生成结果.服装.map((_, 序号) => 序号)));
       if (字段键.length === 0) {
         set显示原始回复(true);
-        set错误('模型没有给出可解析的 <人物> 区块，下面附上它的原始回复。');
+        // 服务侧会把空回分类（安全拦截 / 额度耗尽 / 只回推理 / 没到模型），
+        // 有诊断就照它说，没有才用通用文案 —— 处置办法完全不同。
+        set错误(生成结果.诊断
+          ?? '模型没有给出可解析的 <人物> 区块，下面附上它的原始回复。');
+      } else if (生成结果.重试次数 > 0) {
+        set错误('');
+        set提示(`第 ${生成结果.重试次数 + 1} 次尝试才拿到可用内容（空回已自动重问）。`)
       }
     } catch (异常) {
       set错误(异常 instanceof Error ? 异常.message : String(异常));
@@ -136,6 +143,27 @@ export function CharacterAIPanel({
     const 下一 = new Set(勾选字段);
     if (下一.has(键)) 下一.delete(键); else 下一.add(键);
     set勾选字段(下一);
+  };
+
+  const 补丁消息 = (序号: number, 部分: Partial<角色AI消息>) => {
+    onPatch({
+      角色AI: {
+        ...角色AI,
+        消息: 角色AI.消息.map((项, 位置) => (位置 === 序号 ? { ...项, ...部分 } : 项)),
+      },
+    });
+  };
+
+  const 移动消息 = (序号: number, 方向: -1 | 1) => {
+    const 目标 = 序号 + 方向;
+    if (目标 < 0 || 目标 >= 角色AI.消息.length) return;
+    const 下一 = [...角色AI.消息];
+    [下一[序号], 下一[目标]] = [下一[目标], 下一[序号]];
+    onPatch({ 角色AI: { ...角色AI, 消息: 下一 } });
+  };
+
+  const 删除消息 = (序号: number) => {
+    onPatch({ 角色AI: { ...角色AI, 消息: 角色AI.消息.filter((_, 位置) => 位置 !== 序号) } });
   };
 
   return (
@@ -176,13 +204,14 @@ export function CharacterAIPanel({
           <次级按钮 disabled={生成中 || !请求生成 || !有要求} onClick={() => void 跑生成()}>
             {生成中 ? '生成中…' : '一键生成'}
           </次级按钮>
-          <次级按钮 disabled={生成中} onClick={() => { set结果(null); set错误(''); }}>清空结果</次级按钮>
+          <次级按钮 disabled={生成中} onClick={() => { set结果(null); set错误(''); set提示(''); }}>清空结果</次级按钮>
           <span className="text-[11px]" style={{ color: 'rgba(var(--tj-text-secondary), 0.68)' }}>
             {请求生成 ? '接口：角色 AI 覆盖 → 文生图 LLM → 主 API。' : '（当前入口未接模型调用）'}
           </span>
         </div>
 
         {错误 ? <提示条 kind="error" text={错误} /> : null}
+        {!错误 && 提示 ? <提示条 kind="info" text={提示} /> : null}
 
         {结果 && 可应用字段.length > 0 ? (
           <面板 title={`生成结果（${可应用字段.length} 个字段，默认全选）`} desc="取消勾选的字段保持角色卡上的原值；生成值为空的字段一律不写回。">
@@ -279,30 +308,92 @@ export function CharacterAIPanel({
 
       <面板
         title="角色 AI 设置"
-        desc="提示词默认取用户的「人物生成」预设。接口留空时依次回退：文生图 LLM 预设 → 主 API。"
+        desc="提示词默认取用户的「人物生成」预设：它是一段对话（破甲样例 + 格式规格），顺序即语义，所以这里按消息逐条管理。接口留空时依次回退：文生图 LLM 预设 → 主 API。"
       >
-        <字段 label="提示词" hint="这是 system 消息；本次要求与现有角色卡会作为 user 消息附在后面。">
+        <面板
+          title={`提示词消息（${角色AI.消息.length} 条，启用 ${角色AI.消息.filter((项) => 项.enabled !== false).length} 条）`}
+          desc="「人物生成」预设里角色卡那一组的破甲与规格块按原顺序收录。停用某条就不发它——例如模型不肯写 NSFW 时先停用 NSFW 规格，或反过来把讨论模式打开试试。"
+        >
+          <div className="space-y-2">
+            {角色AI.消息.map((项, 序号) => (
+              <div
+                key={项.id}
+                className="space-y-1.5 px-2 py-2"
+                style={{ border: '1px solid rgba(var(--tj-accent-primary), var(--tj-edge-tint-weak))' }}
+              >
+                <div className="flex flex-wrap items-center gap-2">
+                  <select
+                    className="kaituo-input px-1.5 py-1 text-[11px]"
+                    value={项.role}
+                    onChange={(事件) => 补丁消息(序号, { role: 事件.target.value as 角色AI消息['role'] })}
+                  >
+                    <option value="system">system</option>
+                    <option value="user">user</option>
+                    <option value="assistant">assistant</option>
+                  </select>
+                  <次级按钮
+                    active={项.enabled !== false}
+                    onClick={() => 补丁消息(序号, { enabled: 项.enabled === false })}
+                  >
+                    {项.enabled === false ? '已停用' : '启用中'}
+                  </次级按钮>
+                  <span className="text-[11px]" style={{ color: 'rgba(var(--tj-text-secondary), 0.62)' }}>
+                    {项.content.length} 字
+                  </span>
+                  <div className="ml-auto flex gap-1">
+                    <次级按钮 disabled={序号 === 0} onClick={() => 移动消息(序号, -1)}>↑</次级按钮>
+                    <次级按钮 disabled={序号 === 角色AI.消息.length - 1} onClick={() => 移动消息(序号, 1)}>↓</次级按钮>
+                    <次级按钮 onClick={() => 删除消息(序号)}>删除</次级按钮>
+                  </div>
+                </div>
+                <textarea
+                  className="kaituo-input h-28 w-full px-2 py-1.5 text-[11px] leading-relaxed"
+                  value={项.content}
+                  spellCheck={false}
+                  onChange={(事件) => 补丁消息(序号, { content: 事件.target.value })}
+                />
+              </div>
+            ))}
+          </div>
+
+          <div className="flex flex-wrap gap-2">
+            <次级按钮
+              onClick={() => onPatch({
+                角色AI: {
+                  ...角色AI,
+                  消息: [...角色AI.消息, {
+                    id: `msg_${Date.now().toString(36)}`,
+                    role: 'system',
+                    content: '',
+                    enabled: true,
+                  }],
+                },
+              })}
+            >
+              新增一条
+            </次级按钮>
+            <次级按钮 onClick={() => onPatch({ 角色AI: { ...角色AI, 消息: 创建默认角色AI消息() } })}>
+              恢复「人物生成」默认消息
+            </次级按钮>
+            <次级按钮 onClick={() => onPatch({ 角色AI: { ...创建默认角色AI设置() } })}>
+              恢复全部默认
+            </次级按钮>
+          </div>
+        </面板>
+
+        <字段
+          label="附加要求（可选）"
+          hint="拼在消息序列之后、本次任务之前。想补一句自己的规格或口味就写在这里，不必改内置消息。"
+        >
           <textarea
-            className="kaituo-input h-64 w-full px-2 py-1.5 text-xs leading-relaxed"
-            value={角色AI.提示词}
+            className="kaituo-input h-20 w-full px-2 py-1.5 text-xs leading-relaxed"
+            value={角色AI.附加要求}
             spellCheck={false}
-            onChange={(事件) => onPatch({ 角色AI: { ...角色AI, 提示词: 事件.target.value } })}
+            onChange={(事件) => onPatch({ 角色AI: { ...角色AI, 附加要求: 事件.target.value } })}
           />
         </字段>
-        <div className="flex flex-wrap gap-2">
-          <次级按钮
-            onClick={() => onPatch({ 角色AI: { ...角色AI, 提示词: 人物生成默认提示词 } })}
-          >
-            恢复「人物生成」默认提示词
-          </次级按钮>
-          <次级按钮
-            onClick={() => onPatch({ 角色AI: { ...创建默认角色AI设置() } })}
-          >
-            恢复全部默认
-          </次级按钮>
-        </div>
 
-        <div className="grid gap-2 md:grid-cols-2">
+        <div className="grid gap-2 md:grid-cols-3">
           <字段 label="温度" hint="0.9 左右比较能给出多样的外貌描写；调低会让不同角色长得更像。">
             <input
               type="number"
@@ -317,7 +408,7 @@ export function CharacterAIPanel({
               }}
             />
           </字段>
-          <字段 label="最大输出" hint="14 个字段都是 tag 串，给 8192 足够；太小会在半途被截断。">
+          <字段 label="最大输出" hint="14 个字段都是 tag 串；破甲对话也会占输出，给 12288 以上更稳。">
             <input
               type="number"
               min={256}
@@ -326,7 +417,20 @@ export function CharacterAIPanel({
               value={角色AI.最大输出}
               onChange={(事件) => {
                 const 值 = Number(事件.target.value);
-                onPatch({ 角色AI: { ...角色AI, 最大输出: Number.isFinite(值) ? Math.max(256, Math.trunc(值)) : 8192 } });
+                onPatch({ 角色AI: { ...角色AI, 最大输出: Number.isFinite(值) ? Math.max(256, Math.trunc(值)) : 12288 } });
+              }}
+            />
+          </字段>
+          <字段 label="空回重试次数" hint="解析不到 <人物> 块时自动重问几次。0 表示只问一次。">
+            <input
+              type="number"
+              min={0}
+              max={5}
+              className="kaituo-input w-full px-2 py-1.5 text-sm"
+              value={角色AI.重试次数}
+              onChange={(事件) => {
+                const 值 = Number(事件.target.value);
+                onPatch({ 角色AI: { ...角色AI, 重试次数: Number.isFinite(值) ? Math.min(5, Math.max(0, Math.trunc(值))) : 1 } });
               }}
             />
           </字段>

@@ -6,6 +6,7 @@ import { 读取Comfy资源列表, 探测Comfy存活 } from '@/services/ai/imageG
 import { 统计图片缓存, 清空图片缓存 } from '@/services/imageCache';
 import { 取角色AI配置 } from '@/services/ai/imageGen/llmConfig';
 import { 生成角色特征 } from '@/services/ai/imageGen/characterFeature';
+import type { 传输诊断 } from '@/services/ai/imageGen/illustrationAgent';
 import { chatCompletionNonStream } from '@/services/ai/chatCompletionClient';
 import type { SettingsSectionContext, SettingsSectionDefinition } from './types';
 
@@ -53,6 +54,8 @@ function ImageGenSection({
           + '或在「文生图 → LLM 预设」里启用并填写接口，或在本页填「接口覆盖」。',
         );
       }
+      // 传输层诊断用来区分空回的成因（安全拦截 / 额度耗尽 / 只回推理内容）。
+      let 诊断: 传输诊断 | undefined;
       return 生成角色特征(
         {
           请求: async (消息, innerSignal) => chatCompletionNonStream(配置, {
@@ -60,9 +63,11 @@ function ImageGenSection({
             temperature: 系统.角色AI.温度,
             maxTokens: 系统.角色AI.最大输出,
             signal: innerSignal ?? signal,
+            onResponseDiagnostics: (下一个) => { 诊断 = 下一个; },
           }),
+          取诊断: () => 诊断,
         },
-        { 要求, 角色, 提示词: 系统.角色AI.提示词 },
+        { 要求, 角色, 角色AI: 系统.角色AI },
         signal,
       );
     },

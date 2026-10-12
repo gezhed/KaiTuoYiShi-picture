@@ -383,6 +383,7 @@ export {
 import {
   创建默认文生图系统设置,
   创建默认注入模板列表,
+  创建默认角色AI消息,
   默认启用预设名,
   默认通用角色列表名,
   默认通用服装列表名,
@@ -390,14 +391,61 @@ import {
   镜像启用列表,
   归一化角色启用预设,
   归一化注入模板集,
+  type 角色AI消息,
   type 角色启用预设,
   type 通用角色列表预设,
   type 通用服装列表预设,
   type 注入模板集,
   type 文生图系统设置,
 } from './genSystem';
+import { 人物生成默认提示词 } from '@/prompts/cot/characterFeaturePrompt';
 
 export type { 文生图系统设置 };
+
+/**
+ * 角色 AI 的消息序列归一化。
+ *
+ * 旧存档（本轮之前）只有一个 `提示词: string`，里面是「人物生成」的角色设计块，
+ * **没有破甲对话**——那正是用户反馈「经常空回」的成因。迁移策略：
+ *   · 有 `消息` → 用它（逐条裁剪、丢空内容、未知 role 退回 system）；
+ *   · 没有 `消息` → 用内置的默认序列（破甲 + 框架 + 规格，共 8 条）。
+ * 用户改过的旧提示词不丢：见 `迁移角色AI附加要求`。
+ */
+function 迁移角色AI消息(输入: Partial<文生图系统设置>['角色AI'] | undefined): 角色AI消息[] {
+  const 原始 = 输入?.消息;
+  // 缺省时用内置序列，但**照样走下面的裁剪**：否则「首次水合给未裁剪的默认值、
+  // 二次水合才裁剪」会让水合不幂等（game-settings-hydration 的幂等用例就抓这个）。
+  const 来源 = Array.isArray(原始) && 原始.length > 0 ? 原始 : 创建默认角色AI消息();
+  const 结果: 角色AI消息[] = [];
+  for (const [序号, 项] of 来源.entries()) {
+    if (!项 || typeof 项 !== 'object') continue;
+    const 内容 = String((项 as 角色AI消息).content ?? '').trim();
+    if (!内容) continue;
+    const role = (项 as 角色AI消息).role;
+    结果.push({
+      id: String((项 as 角色AI消息).id ?? `msg_${序号 + 1}`),
+      role: role === 'user' || role === 'assistant' ? role : 'system',
+      content: 内容,
+      enabled: (项 as 角色AI消息).enabled !== false,
+    });
+  }
+  return 结果.length > 0 ? 结果 : 创建默认角色AI消息().map((项) => ({ ...项, content: 项.content.trim() }));
+}
+
+/**
+ * 旧版 `提示词` 的迁移：它是「角色设计」那一条。
+ *
+ * 内置默认序列里已经含同一条，所以
+ *   · 用户没改过它（等于旧默认值）→ 丢弃，避免同一条发两遍；
+ *   · 用户改过 → 当作「附加要求」保留，仍然会发出去（位置在消息序列之后）。
+ */
+function 迁移角色AI附加要求(输入: Partial<文生图系统设置>['角色AI'] | undefined): string {
+  const 已存 = String(输入?.附加要求 ?? '').trim();
+  if (已存) return 已存;
+  const 旧提示词 = String((输入 as { 提示词?: string } | undefined)?.提示词 ?? '').trim();
+  if (!旧提示词) return '';
+  return 旧提示词 === 人物生成默认提示词.trim() ? '' : 旧提示词;
+}
 
 export function 归一化文生图系统设置(input?: Partial<文生图系统设置>): 文生图系统设置 {
   const defaults = 创建默认文生图系统设置();
@@ -473,6 +521,9 @@ export function 归一化文生图系统设置(input?: Partial<文生图系统�
   合并.角色AI = {
     ...defaults.角色AI,
     ...(input.角色AI ?? {}),
+    消息: 迁移角色AI消息(input.角色AI),
+    附加要求: 迁移角色AI附加要求(input.角色AI),
+    重试次数: Math.max(0, Math.trunc(input.角色AI?.重试次数 ?? defaults.角色AI.重试次数) || 0),
     API: { ...defaults.角色AI.API, ...(input.角色AI?.API ?? {}) },
   };
 

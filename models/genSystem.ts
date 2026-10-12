@@ -15,7 +15,16 @@
  * 命名沿用移植方的领域中文，与来源字段名保持可对照关系（见每条注释）。
  */
 
-import { 人物生成默认提示词 } from '@/prompts/cot/characterFeaturePrompt';
+import {
+  人物生成破甲提示词,
+  人物生成框架头,
+  人物生成框架尾,
+  人物生成增强定义,
+  人物生成用户人设,
+  人物生成角色设计,
+  人物生成服装设计,
+  人物生成讨论模式,
+} from '@/prompts/cot/characterFeaturePrompt';
 
 /** 生图渠道。第一轮只实现 ComfyUI；其余为后续轮次登记位。 */
 export type 生图渠道 = 'comfyui' | 'novelai' | 'sd' | 'banana' | 'runninghub';
@@ -299,16 +308,56 @@ export interface 注入模板集 {
 }
 
 /**
+ * 角色 AI 的一条提示词消息。
+ *
+ * 用消息序列而不是单条字符串，是因为「人物生成」预设本身是**对话形态**的：
+ * 破甲样例对话里 system / user / assistant 交替出现，顺序本身就是提示词的一部分
+ * （上游 ST 预设的 `prompt_order` 就规定了顺序）。压成一条字符串会丢掉这个结构。
+ */
+export interface 角色AI消息 {
+  id: string;
+  role: 'system' | 'user' | 'assistant';
+  content: string;
+  enabled: boolean;
+}
+
+/**
  * 角色 AI（`characterAI` L24688）：一键生成角色特征用的提示词与采样参数。
  *
- * 上游还有 `model` 字段，本应用改为与出图 LLM 一致的四段式 API 覆盖：
- * 留空即回退「文生图 → LLM 预设」的接口，再回退主 API。
+ * 上游只有一句 `systemPrompt`（占位说明），本应用换成：
+ * 「人物生成」预设的破甲对话 + 格式规格的消息序列（逐字移植，见
+ * `prompts/cot/characterFeaturePrompt.ts`），再在调用时追加本次任务。
+ * 上游的 `model` 字段改为与出图 LLM 一致的四段式 API 覆盖：留空即回退。
  */
 export interface 角色AI设置 {
-  提示词: string;
+  /** 破甲与规格。顺序即发送顺序；停用的条目不会发出。 */
+  消息: 角色AI消息[];
+  /** 额外要求：拼在消息序列之后、本次任务之前；留空即不加。 */
+  附加要求: string;
   温度: number;
   最大输出: number;
+  /** 回复里解析不到 <人物> 块时的自动重问次数（0 表示只问一次）。 */
+  重试次数: number;
   API: { provider: string; baseUrl: string; apiKey: string; model: string };
+}
+
+/** 默认消息序列：顺序照抄「人物生成」预设的 prompt_order（角色卡那一组）。 */
+export function 创建默认角色AI消息(): 角色AI消息[] {
+  // 统一 trim：常量是逐字收录的，末尾可能带换行；默认值本身就是归一化后的形态，
+  // 否则「归一化(默认) !== 默认」，水合幂等用例会红（game-settings-hydration）。
+  const 消息: 角色AI消息[] = [
+    { id: 'jailbreak', role: 'system', content: 人物生成破甲提示词, enabled: true },
+    { id: 'framework-open', role: 'system', content: 人物生成框架头, enabled: true },
+    { id: 'framework-close', role: 'system', content: 人物生成框架尾, enabled: true },
+    { id: 'enhance', role: 'assistant', content: 人物生成增强定义, enabled: true },
+    { id: 'user-persona', role: 'user', content: 人物生成用户人设, enabled: true },
+    { id: 'character-spec', role: 'system', content: 人物生成角色设计, enabled: true },
+    { id: 'outfit-spec', role: 'system', content: 人物生成服装设计, enabled: true },
+    // 讨论模式默认停用：它要求先输出 <talk> 再输出 <content>，单次调用下容易
+    // 把输出额度耗在讨论上而给不出 <人物> 块（见该常量的注释）。
+    { id: 'discuss-mode', role: 'system', content: 人物生成讨论模式, enabled: false },
+  ];
+  return 消息.map((项) => ({ ...项, content: 项.content.trim() }));
 }
 
 export const 默认启用预设名 = '默认启用列表';
@@ -949,10 +998,14 @@ export function 创建默认LLM设置(): LLM设置 {
 /** 一键生成角色特征用的默认配置：提示词取「人物生成」（见 prompts/cot/characterFeaturePrompt.ts）。 */
 export function 创建默认角色AI设置(): 角色AI设置 {
   return {
-    提示词: 人物生成默认提示词,
+    消息: 创建默认角色AI消息(),
+    附加要求: '',
     温度: 0.9,
     // 一次要产出 14 个部位字段，且每个字段都是 tag 串；给不足会在半途被截断。
-    最大输出: 8192,
+    // 破甲对话本身也占输出（模型会先复述边界共识），所以比只发规格时给得更宽。
+    最大输出: 12288,
+    // 空回最常见的成因是拒绝与额度耗尽，重问一次基本能区分「偶发」与「稳定拒绝」。
+    重试次数: 1,
     API: { provider: '', baseUrl: '', apiKey: '', model: '' },
   };
 }

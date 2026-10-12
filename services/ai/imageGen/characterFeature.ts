@@ -22,9 +22,9 @@
  *   上游那条「把参考图挂到 user 消息」的能力在这里没有落点，故未移植。
  */
 
-import type { 角色卡, 角色部位字段, 服装条目, 文生图系统设置 } from '@/models/genSystem';
+import type { 角色AI消息, 角色AI设置, 角色卡, 角色部位字段, 服装条目, 文生图系统设置 } from '@/models/genSystem';
 import { 角色部位字段名 } from '@/models/genSystem';
-import { 剥掉思维链 } from './illustrationAgent';
+import { 剥掉思维链, 合并相邻同角色, type 传输诊断 } from './illustrationAgent';
 
 export interface LLM消息 {
   role: 'system' | 'user' | 'assistant';
@@ -249,13 +249,20 @@ export interface 生成角色特征请求 {
   要求: string;
   /** 当前正在编辑的角色卡；有内容时会作为「现有设定」一起发过去。 */
   角色?: 角色卡;
-  /** 生效的提示词；留空则报错，由调用方决定回退。 */
-  提示词: string;
+  /** 生效的角色 AI 配置（消息序列 + 附加要求 + 重试次数）。 */
+  角色AI: Pick<角色AI设置, '消息' | '附加要求' | '重试次数'>;
   /** 上一次生成时的上下文（`generationContext`），有就一并带上。 */
   生成上下文?: string;
 }
 
-/** 拼两次消息：system 是「人物生成」提示词，user 是本次任务与现有设定。 */
+/**
+ * 拼出一次请求的消息链。
+ *
+ * 「人物生成」预设本身是**对话形态**的：破甲样例对话里 system / user / assistant
+ * 交替出现，顺序即语义，所以按消息序列逐条发出（只发 enabled 的），最后追加本次任务。
+ * 相邻同角色合并：社区预设常把说明拆成很多条，逐条发既浪费额度、部分中转还会报错
+ * （与插图提示词链路同一处理，直接复用那个函数）。
+ */
 export function 构建角色特征消息(请求: 生成角色特征请求): LLM消息[] {
   const 要求 = (请求.要求 ?? '').trim();
   const 现有 = 请求.角色 && !角色卡为空(请求.角色) ? 角色卡转人物文本(请求.角色) : '';
@@ -271,35 +278,90 @@ export function 构建角色特征消息(请求: 生成角色特征请求): LLM�
   } else {
     段.push('【当前角色卡】\n（空白，需要从零生成全部字段）');
   }
-  段.push('直接输出 <人物>…</人物> 区块；如果这次还生成了服装，可以在其后追加 <服装>…</服装> 区块。');
+  段.push('直接输出 <人物>…</人物> 区块；如果这次还生成了服装，可以额外追加 <服装>…</服装> 区块。');
 
-  return [
-    { role: 'system', content: 请求.提示词 },
-    { role: 'user', content: 段.join('\n\n') },
-  ];
+  const 前置: LLM消息[] = [];
+  for (const 项 of 请求.角色AI.消息 ?? []) {
+    if (项.enabled === false) continue;
+    const 内容 = (项.content ?? '').trim();
+    if (!内容) continue;
+    前置.push({ role: 项.role, content: 内容 });
+  }
+  const 附加 = (请求.角色AI.附加要求 ?? '').trim();
+  if (附加) 前置.push({ role: 'user', content: 附加 });
+
+  return 合并相邻同角色([...前置, { role: 'user', content: 段.join('\n\n') }]);
+}
+
+/** 空回的成因分类文案；与插图链路同一套判据，但按本条链路给出处置建议。 */
+export function 诊断空回(传输?: 传输诊断): string {
+  const 因 = (传输?.finishReason ?? '').toUpperCase();
+  if (因 === 'SAFETY' || 因 === 'PROHIBITED_CONTENT' || 因 === 'BLOCKLIST') {
+    return `模型以安全策略为由拒绝返回内容（finishReason=${传输?.finishReason}）。`
+      + '这不是本应用能绕过的：换一个未开启内容审查的模型或中转。'
+      + '破甲消息已在「角色 AI 设置」里，必要时把 NSFW 那几条停用，先只生成 SFW 字段。';
+  }
+  if (因 === 'MAX_TOKENS' || 因 === 'LENGTH') {
+    return `模型把输出额度用完了却没产出 <人物> 块（finishReason=${传输?.finishReason}）。`
+      + `本次请求的最大输出是 ${传输?.请求最大输出 ?? '未知'}：到「角色 AI 设置」把它调大，`
+      + '或停用「讨论模式」——它会让模型先写一大段 <talk>。';
+  }
+  if (传输?.sawReasoning && !传输.sawVisibleContent) {
+    return '接口只返回了推理内容（reasoning_content），正文为空。'
+      + '这是中转把思考内容与正文分流导致的：换一个中转，或关掉该模型的思考模式。';
+  }
+  const 结构 = 传输?.响应结构 ? `\n接口返回的结构：${传输.响应结构}` : '';
+  const 未到模型 = /prompt_tokens=0\b/.test(传输?.响应结构 ?? '');
+  if (未到模型) {
+    return '返回的 prompt_tokens 为 0，说明这次请求**没有到达模型**，是在网关/中转层被拦下的'
+      + '（参数不被支持、体积过大或鉴权差异）。此时调提示词不会有任何效果，应先排查中转。' + 结构;
+  }
+  return `模型返回为空或没有 <人物> 块${传输?.finishReason ? `（finishReason=${传输.finishReason}）` : ''}。`
+    + '可以：把「最大输出」调大、把「重试次数」设为 1 以上、或换一个模型。' + 结构;
 }
 
 export interface 生成角色特征依赖 {
   /** 传入已拼好的消息链，返回模型原始文本。 */
   请求: (消息: LLM消息[], signal?: AbortSignal) => Promise<string>;
+  /** 请求方把传输层诊断回填进来，供空回分类。 */
+  取诊断?: () => 传输诊断 | undefined;
 }
 
 export interface 生成角色特征结果 extends 解析人物结果 {
   原始回复: string;
+  /** 重试了几次（0 表示一次就拿到可用内容）。 */
+  重试次数: number;
+  /** 解析不到任何字段时的成因说明。 */
+  诊断?: string;
 }
 
 /**
- * 跑一次生成。解析不到任何字段时**不抛错**，把原始回复交回界面显示——
- * 空回、被审查、格式跑偏的处置方式都不一样，界面需要原文才能说清。
+ * 跑一次生成。
+ *
+ * 解析不到任何字段时按 `角色AI.重试次数` 重问（空回常常是偶发：额度抖动、
+ * 中转抽风、模型这次只回了推理内容）；仍然失败**不抛错**，把原始回复与诊断
+ * 交回界面——空回、被审查、格式跑偏的处置方式不一样，界面需要原文才能说清。
  */
 export async function 生成角色特征(
   依赖: 生成角色特征依赖,
   请求: 生成角色特征请求,
   signal?: AbortSignal,
 ): Promise<生成角色特征结果> {
-  const 消息 = 构建角色特征消息(请求);
-  const 原始回复 = await 依赖.请求(消息, signal);
-  return { ...解析人物区块(原始回复), 原始回复 };
+  const 最大重试 = Math.max(0, Math.trunc(请求.角色AI.重试次数 ?? 0));
+  let 最后一次 = '';
+
+  for (let 尝试 = 0; 尝试 <= 最大重试; 尝试 += 1) {
+    最后一次 = await 依赖.请求(构建角色特征消息(请求), signal);
+    const 解析 = 解析人物区块(最后一次);
+    if (解析有内容(解析)) return { ...解析, 原始回复: 最后一次, 重试次数: 尝试 };
+  }
+
+  return {
+    ...解析人物区块(最后一次),
+    原始回复: 最后一次,
+    重试次数: 最大重试,
+    诊断: 诊断空回(依赖.取诊断?.()),
+  };
 }
 
 /**
@@ -329,7 +391,7 @@ export function 角色卡为空(角色: 角色卡 | undefined): boolean {
   return 角色部位字段名.every((键) => (角色[键] ?? '').trim() === '');
 }
 
-/** 从设置里取生效的「人物生成」提示词。 */
-export function 取角色生成提示词(设置: 文生图系统设置): string {
-  return (设置.角色AI?.提示词 ?? '').trim();
+/** 从设置里取生效的「人物生成」消息序列（只取启用的）。 */
+export function 取启用角色AI消息(设置: 文生图系统设置): 角色AI消息[] {
+  return (设置.角色AI?.消息 ?? []).filter((项) => 项.enabled !== false && (项.content ?? '').trim().length > 0);
 }

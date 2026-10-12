@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import type { 角色卡 } from '@/models/genSystem';
+import type { 角色AI设置, 角色卡 } from '@/models/genSystem';
+import { 创建默认角色AI消息 } from '@/models/genSystem';
 import {
+  诊断空回,
   合并生成字段,
   构建角色特征消息,
   服装草稿转条目,
@@ -42,6 +44,19 @@ function 建角色(覆盖: Partial<角色卡> = {}): 角色卡 {
     fullBodyNSFW: '',
     fullBodyNSFWBack: '',
     negative: '',
+    ...覆盖,
+  };
+}
+
+/** 生效的角色 AI 配置：默认序列（含破甲）+ 不重试。 */
+function 建角色AI(覆盖: Partial<角色AI设置> = {}): 角色AI设置 {
+  return {
+    消息: 创建默认角色AI消息(),
+    附加要求: '',
+    温度: 0.9,
+    最大输出: 12288,
+    重试次数: 0,
+    API: { provider: '', baseUrl: '', apiKey: '', model: '' },
     ...覆盖,
   };
 }
@@ -154,29 +169,93 @@ describe('服装草稿转条目', () => {
 });
 
 describe('构建角色特征消息', () => {
-  it('system 就是提示词，user 里带要求与现有角色卡', () => {
+  it('默认消息序列带破甲，且顺序即预设顺序（system 会被合并）', () => {
     const 消息 = 构建角色特征消息({
       要求: '流萤，星核猎手少女，银白长发',
       角色: 建角色({ nameCN: '流萤', facialFeatures: 'green eyes' }),
-      提示词: '【提示词】',
+      角色AI: 建角色AI(),
     });
-    expect(消息).toHaveLength(2);
-    expect(消息[0]).toEqual({ role: 'system', content: '【提示词】' });
-    expect(消息[1].role).toBe('user');
-    expect(消息[1].content).toContain('流萤，星核猎手少女，银白长发');
-    expect(消息[1].content).toContain('中文名称: 流萤');
-    expect(消息[1].content).toContain('五官外貌: green eyes');
+    // 破甲（system）+ 框架 + 规格 相邻同角色合并成一条 system；
+    // 中间夹着 assistant（增强定义）与 user（用户人设），所以至少三段。
+    expect(消息.filter((项) => 项.role === 'system').length).toBeGreaterThanOrEqual(1);
+    const 全部文本 = 消息.map((项) => 项.content).join('\n');
+    expect(全部文本).toContain('小克:头好疼，我是谁？');
+    // 载入噪声（ST 的 roll 宏 + 随机字符串）不该原样带进来。
+    expect(全部文本).not.toContain('{{roll');
+    expect(全部文本).not.toContain('sfafafd');
+    expect(全部文本).toContain('正在载入');
+    expect(全部文本).toContain('载入完成！');
+    expect(全部文本).toContain('<人物>');
+    expect(消息.at(-1)?.role).toBe('user');
+    expect(消息.at(-1)?.content).toContain('流萤，星核猎手少女，银白长发');
+    expect(消息.at(-1)?.content).toContain('中文名称: 流萤');
+    expect(消息.at(-1)?.content).toContain('五官外貌: green eyes');
+  });
+
+  it('停用的消息不发出（讨论模式默认停用）', () => {
+    const 消息 = 构建角色特征消息({ 要求: 'x', 角色AI: 建角色AI() });
+    expect(消息.map((项) => 项.content).join('\n')).not.toContain('讨论完毕，开始设计');
+
+    const 开启讨论 = 构建角色特征消息({
+      要求: 'x',
+      角色AI: 建角色AI({
+        消息: 创建默认角色AI消息().map((项) => (项.id === 'discuss-mode' ? { ...项, enabled: true } : 项)),
+      }),
+    });
+    expect(开启讨论.map((项) => 项.content).join('\n')).toContain('<talk>');
+  });
+
+  it('附加要求插在序列之后、本次任务之前', () => {
+    const 消息 = 构建角色特征消息({ 要求: 'x', 角色AI: 建角色AI({ 附加要求: '额外要求：不要写翅膀' }) });
+    const 文本 = 消息.map((项) => 项.content).join('\n');
+    expect(文本).toContain('额外要求：不要写翅膀');
+    // 任务段仍在最后一条 user 里（附加要求与它相邻会被合并成同一条 user，属预期）。
+    expect(消息.at(-1)?.content).toContain('额外要求：不要写翅膀');
   });
 
   it('空角色卡时不发送「现有设定」，只说明需要从零生成', () => {
-    const 消息 = 构建角色特征消息({ 要求: '随便一个角色', 角色: 建角色(), 提示词: 'P' });
-    expect(消息[1].content).toContain('（空白，需要从零生成全部字段）');
-    expect(消息[1].content).not.toContain('五官外貌:');
+    const 消息 = 构建角色特征消息({ 要求: '随便一个角色', 角色: 建角色(), 角色AI: 建角色AI() });
+    const 任务 = 消息.at(-1)?.content ?? '';
+    expect(任务).toContain('（空白，需要从零生成全部字段）');
+    expect(任务).not.toContain('【当前角色卡（可以改写');
   });
 
   it('带生成上下文时一并附上', () => {
-    const 消息 = 构建角色特征消息({ 要求: 'x', 提示词: 'P', 生成上下文: '上一轮的世界书触发' });
-    expect(消息[1].content).toContain('上一轮的世界书触发');
+    const 消息 = 构建角色特征消息({ 要求: 'x', 角色AI: 建角色AI(), 生成上下文: '上一轮的世界书触发' });
+    expect(消息.at(-1)?.content).toContain('上一轮的世界书触发');
+  });
+});
+
+describe('诊断空回', () => {
+  it('安全拦截给出「换模型/中转」的处置', () => {
+    expect(诊断空回({ sawReasoning: false, sawVisibleContent: false, selectedModel: 'x', finishReason: 'SAFETY' }))
+      .toContain('安全策略');
+  });
+
+  it('额度耗尽点名最大输出与讨论模式', () => {
+    const 文本 = 诊断空回({
+      sawReasoning: false, sawVisibleContent: false, selectedModel: 'x',
+      finishReason: 'MAX_TOKENS', 请求最大输出: 8192,
+    });
+    expect(文本).toContain('额度');
+    expect(文本).toContain('8192');
+    expect(文本).toContain('讨论模式');
+  });
+
+  it('只回推理内容时点名中转分流', () => {
+    expect(诊断空回({ sawReasoning: true, sawVisibleContent: false, selectedModel: 'x' }))
+      .toContain('reasoning_content');
+  });
+
+  it('prompt_tokens=0 时指出请求没到模型', () => {
+    expect(诊断空回({
+      sawReasoning: false, sawVisibleContent: false, selectedModel: 'x',
+      响应结构: 'choices=1, prompt_tokens=0, completion_tokens=0',
+    })).toContain('没有到达模型');
+  });
+
+  it('没有诊断信息时给通用兜底文案', () => {
+    expect(诊断空回(undefined)).toContain('最大输出');
   });
 });
 
@@ -214,17 +293,48 @@ describe('合并生成字段', () => {
 describe('生成角色特征（端到端，替换模型调用）', () => {
   it('把模型回复解析成字段与服装', async () => {
     const 依赖: 生成角色特征依赖 = { 请求: () => Promise.resolve(合法回复) };
-    const 结果 = await 生成角色特征(依赖, { 要求: '流萤', 提示词: 'P' });
+    const 结果 = await 生成角色特征(依赖, { 要求: '流萤', 角色AI: 建角色AI() });
     expect(结果.字段.nameCN).toBe('流萤');
     expect(结果.服装).toHaveLength(1);
     expect(结果.原始回复).toBe(合法回复);
+    expect(结果.重试次数).toBe(0);
+    expect(结果.诊断).toBeUndefined();
   });
 
-  it('模型跑偏时不抛错，把原始回复交回界面', async () => {
-    const 依赖: 生成角色特征依赖 = { 请求: () => Promise.resolve('（空回复）') };
-    const 结果 = await 生成角色特征(依赖, { 要求: '流萤', 提示词: 'P' });
+  it('第一次空回时按重试次数重问，第二次成功', async () => {
+    let 次数 = 0;
+    const 依赖: 生成角色特征依赖 = {
+      请求: () => {
+        次数 += 1;
+        return Promise.resolve(次数 === 1 ? '' : 合法回复);
+      },
+    };
+    const 结果 = await 生成角色特征(依赖, { 要求: '流萤', 角色AI: 建角色AI({ 重试次数: 2 }) });
+    expect(次数).toBe(2);
+    expect(结果.重试次数).toBe(1);
+    expect(结果.字段.nameCN).toBe('流萤');
+  });
+
+  it('重试用尽仍为空回：不抛错，交回原文与诊断', async () => {
+    let 次数 = 0;
+    const 依赖: 生成角色特征依赖 = {
+      请求: () => { 次数 += 1; return Promise.resolve('（空回复）'); },
+      取诊断: () => ({
+        sawReasoning: false, sawVisibleContent: false, selectedModel: 'x', finishReason: 'MAX_TOKENS',
+      }),
+    };
+    const 结果 = await 生成角色特征(依赖, { 要求: '流萤', 角色AI: 建角色AI({ 重试次数: 1 }) });
+    expect(次数).toBe(2);
     expect(解析有内容(结果)).toBe(false);
     expect(结果.原始回复).toBe('（空回复）');
+    expect(结果.诊断).toContain('额度');
+  });
+
+  it('重试次数为 0 时只问一次', async () => {
+    let 次数 = 0;
+    const 依赖: 生成角色特征依赖 = { 请求: () => { 次数 += 1; return Promise.resolve('x'); } };
+    await 生成角色特征(依赖, { 要求: '流萤', 角色AI: 建角色AI({ 重试次数: 0 }) });
+    expect(次数).toBe(1);
   });
 
   it('把 signal 透传给调用方', async () => {
@@ -236,7 +346,7 @@ describe('生成角色特征（端到端，替换模型调用）', () => {
         return Promise.resolve(合法回复);
       },
     };
-    await 生成角色特征(依赖, { 要求: '流萤', 提示词: 'P' }, 控制器.signal);
+    await 生成角色特征(依赖, { 要求: '流萤', 角色AI: 建角色AI() }, 控制器.signal);
     expect(收到).toBe(控制器.signal);
   });
 });
