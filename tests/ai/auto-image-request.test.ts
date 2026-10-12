@@ -147,6 +147,49 @@ describe('自动生图会发起请求', () => {
   });
 });
 
+describe('自动生图过程中界面上必须有反馈', () => {
+  it('等待期间就有一条 pending，说明正在写提示词', async () => {
+    const { state, queueTasks } = 造State(可自动生图的设置());
+    const { ctx, d } = 造参数(state);
+    // 让生成器「悬停」在飞行中，检查这时队列里有没有东西。
+    let 放行: () => void = () => {};
+    const 飞行中 = new Promise<void>((resolve) => { 放行 = resolve; });
+    生成消息插图.mockImplementation(async () => {
+      await 飞行中;
+      return { 插图: [], 相册: { assets: [], entries: [] }, 新增条目: [], 成功数: 0, 失败数: 0 };
+    });
+    const 任务 = stage11_backgroundJobs(ctx as never, d as never);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const pending = (queueTasks as Array<{ id: string; status: string; detail?: string; 阶段?: string }>)
+      .filter((项) => 项.status === 'pending');
+    expect(pending.some((项) => 项.id === 'narrative_image_parse' && 项.阶段 === '等提示词')).toBe(true);
+    expect(pending.some((项) => 项.detail?.includes('正在为正文生成插图'))).toBe(true);
+    放行();
+    await 任务;
+  });
+
+  it('进入出图阶段会另报一条 pending（与「等提示词」分得开）', async () => {
+    const { state, queueTasks } = 造State(可自动生图的设置());
+    const { ctx, d } = 造参数(state);
+    生成消息插图.mockImplementation(async (_state, _id, _正文, _已有, 选项?: { on进度?: (事件: unknown) => void }) => {
+      选项?.on进度?.({ 阶段: '出图', 完成数: 0, 总数: 3 });
+      return {
+        插图: [{ id: 'nar_1', dataUrl: '', status: 'done', description: 'x', prompt: 'image###p###' }],
+        相册: { assets: [], entries: [] },
+        新增条目: [],
+        成功数: 1,
+        失败数: 0,
+      };
+    });
+    await stage11_backgroundJobs(ctx as never, d as never);
+    const 出图任务 = (queueTasks as Array<{ id: string; status: string; detail?: string; 阶段?: string }>)
+      .filter((项) => 项.id === 'narrative_image_generate' && 项.status === 'pending');
+    expect(出图任务).toHaveLength(1);
+    expect(出图任务[0].阶段).toBe('出图中');
+    expect(出图任务[0].detail).toContain('共 3 张');
+  });
+});
+
 describe('不满足条件时不发请求，但对用户可见', () => {
   it('手动模式不发请求', async () => {
     const 基础 = 创建默认文生图系统设置();

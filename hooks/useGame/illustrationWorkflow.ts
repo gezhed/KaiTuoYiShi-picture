@@ -15,6 +15,7 @@ import { cleanLeafPatch } from './workflowTransaction';
 import { ensureHeadLeafWritable } from './saveLoadWorkflow';
 import { devLog, devLogError } from '@/utils/devLog';
 import { 生成单张插图 } from '@/services/ai/imageGen/generateIllustration';
+import type { 插图进度 } from '@/services/ai/imageGen/illustrationPipeline';
 import {
   生成正文插图,
   重生成单张插图,
@@ -98,12 +99,14 @@ export async function 解析本次参考图(
 export function 构造插图依赖(
   state: UseGameStateReturn,
   onAlbumItem: (item: 归档条目) => void,
+  on进度?: (事件: 插图进度) => void,
 ): 插图流水线依赖 {
   const 设置 = state.deviceSettings.gameSettings;
   const 系统 = 设置.文生图系统;
   const LLM配置 = 取文生图LLM配置(设置, state.deviceSettings.apiSettings);
 
   return {
+    on进度,
     生成提示词: async ({ 正文, signal }) => {
       if (!LLM配置) {
         throw new Error('正文配图的LLM未配置：请启用LLM并填写可用的模型接口。');
@@ -179,11 +182,16 @@ export async function 生成消息插图(
   消息Id: string,
   正文: string,
   已有插图?: 叙事插图[],
-  选项?: { 只重新生成提示词?: boolean; signal?: AbortSignal },
+  选项?: {
+    只重新生成提示词?: boolean;
+    signal?: AbortSignal;
+    /** 进度回调：界面据此显示「正在写提示词 / 正在逐张出图（i/N）」。 */
+    on进度?: (事件: 插图进度) => void;
+  },
 ): Promise<插图作业结果> {
   const 设置 = state.deviceSettings.gameSettings.文生图系统;
   const 新增条目: 归档条目[] = [];
-  const 依赖 = 构造插图依赖(state, (条目) => 新增条目.push(条目));
+  const 依赖 = 构造插图依赖(state, (条目) => 新增条目.push(条目), 选项?.on进度);
   const 参考图 = await 解析本次参考图(设置);
 
   const 结果 = await 生成正文插图({
@@ -407,3 +415,51 @@ export async function 重生成消息单张插图(
 }
 
 export type { 生成正文插图结果 };
+
+/* ------------------------------------------------------------------ *
+ * 单张重生时的界面标记
+ * ------------------------------------------------------------------ */
+
+/**
+ * 把某张插图标成「生成中」。
+ *
+ * 为什么需要：单张重生的结果只在**结束时**才写回消息，中间没有任何状态变化，
+ * 于是卡片上的按钮一直可点、界面上也没有「正在生成」的样子——用户会反复点，
+ * 点几次就出几张。先把这张标成 `generating`，卡片会立刻换成「正在生成…」占位
+ * （那个分支不渲染任何按钮），重复点击自然就没了。
+ */
+export function 标记插图为生成中(
+  历史: 聊天消息[],
+  消息Id: string,
+  插图Id: string,
+): 聊天消息[] {
+  return 历史.map((项) => (
+    项.id === 消息Id
+      ? {
+        ...项,
+        narrativeImages: (项.narrativeImages ?? []).map((候选) => (
+          候选.id === 插图Id ? { ...候选, status: 'generating' as const, error: undefined } : 候选
+        )),
+      }
+      : 项
+  ));
+}
+
+/** 单张重生失败时把这张还原成失败态（保留提示词，用户可改完再试）。 */
+export function 标记插图失败(
+  历史: 聊天消息[],
+  消息Id: string,
+  插图Id: string,
+  原因: string,
+): 聊天消息[] {
+  return 历史.map((项) => (
+    项.id === 消息Id
+      ? {
+        ...项,
+        narrativeImages: (项.narrativeImages ?? []).map((候选) => (
+          候选.id === 插图Id ? { ...候选, status: 'failed' as const, error: 原因 } : 候选
+        )),
+      }
+      : 项
+  ));
+}

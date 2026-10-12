@@ -14,6 +14,8 @@ export interface 队列任务补丁 {
   retrying?: boolean;
   cancellable?: boolean;
   cancelled?: boolean;
+  /** 正文生图的阶段，界面据此显示「等提示词」还是「逐张出图」。 */
+  阶段?: '等提示词' | '出图中';
 }
 
 export const QUEUE_TASK_TITLES: Record<队列任务ID, string> = {
@@ -70,6 +72,7 @@ export function pushQueueTask(
     retrying: patch?.retrying,
     cancellable: patch?.cancellable,
     cancelled: patch?.cancelled,
+    阶段: patch?.阶段,
   };
   state.setQueueTasks((prev) => [...prev.slice(-24), task]);
   if (queueTasksMirror) {

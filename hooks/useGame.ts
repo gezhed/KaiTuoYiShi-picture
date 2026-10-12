@@ -58,7 +58,7 @@ import { generateSkillDraft } from '@/services/ai/skillGenerator';
 import { generateTravelerTemplate } from '@/services/ai/travelerTemplate';
 import { resolveApiConfig, resolveMainApiConfig } from '@/services/apiConfig';
 import { parseActionOptionsBlock } from '@/services/ai/responseParser';
-import { 生成消息插图, 重生成消息单张插图, 保存插图结果 } from '@/hooks/useGame/illustrationWorkflow';
+import { 生成消息插图, 重生成消息单张插图, 保存插图结果, 标记插图为生成中, 标记插图失败 } from '@/hooks/useGame/illustrationWorkflow';
 import { 合并重跑提示词 } from '@/services/ai/imageGen/illustrationPipeline';
 import type { 战技生成草稿, 战技生成上下文, TravelerTemplateContext, TravelerTemplateDraft } from '@/contracts/ai';
 import type { 手机回复上下文, PhoneMemoryCommitInput } from '@/contracts/phone';
@@ -572,6 +572,21 @@ export function useGame(): UseGameReturn {
             stateRef.current,
             message.id,
             目标消息?.parsedResponse?.body.trim() || 目标消息?.content.trim() || message.content,
+            undefined,
+            {
+              // 出图阶段单独报一条：只留一条「正在请求 LLM…」的话，出图那几十秒里
+              // 界面看不出还在干活，用户会以为卡住了。
+              // 只报第一次（完成数 0），后续每张不再刷屏，终局另有 success/failed。
+              on进度: (事件) => {
+                if (事件.阶段 !== '出图' || (事件.完成数 ?? 0) > 0) return;
+                pushQueueTask(stateRef.current, 'narrative_image_generate', 'pending', {
+                  detail: `正在逐张出图（共 ${事件.总数 ?? 0} 张）…`,
+                  turn: 回合,
+                  targetMessageId: message.id,
+                  阶段: '出图中',
+                });
+              },
+            },
           );
           // 把 LLM 的**原文**一并留下：解析失败时用户需要看到模型到底回了什么，
           // 否则只能靠猜「是没返回，还是返回了但格式不对」。
@@ -1017,6 +1032,22 @@ export function useGame(): UseGameReturn {
     插图: import('@/models/chat').叙事插图,
     options?: { 新提示词正文?: string; 覆盖尺寸?: { 宽度: number; 高度: number } | null; signal?: AbortSignal },
   ): Promise<import('@/models/chat').叙事插图> => {
+    const 回合 = Number(
+      stateRef.current.chatHistory.find((项) => 项.id === messageId)?.gameTime,
+    ) || stateRef.current.turnCount;
+    /*
+     * 点下去立刻给反馈，两件事一起做：
+     *   ① 把这张标成 generating —— 卡片换成「正在生成…」占位，那个分支不渲染按钮，
+     *      所以不可能重复点（用户反馈过「没有提示、会多次点击」）；
+     *   ② 落一条 pending 任务 —— 回合动作视图据此把整轮的按钮也置灰。
+     */
+    stateRef.current.setChatHistory(标记插图为生成中(stateRef.current.chatHistory, messageId, 插图.id));
+    pushQueueTask(stateRef.current, 'narrative_image_generate', 'pending', {
+      detail: options?.新提示词正文 !== undefined ? '正在用修改后的提示词重出这一张…' : '正在重新生成这一张…',
+      turn: 回合,
+      targetMessageId: messageId,
+      阶段: '出图中',
+    });
     try {
       devLog('net', 'illustration-regenerate-start', { id: 插图.id });
       const 结果 = await 重生成消息单张插图(stateRef.current, 插图, options);
@@ -1028,10 +1059,31 @@ export function useGame(): UseGameReturn {
       stateRef.current.set相册(结果.相册);
       stateRef.current.setChatHistory(下一份历史);
       // 单张重生同样发生在回合之外，不落盘的话重新进入就会丢。
-      await 保存插图结果(stateRef.current, 下一份历史, 结果.相册, 结果.新增条目);
+      const 落盘 = await 保存插图结果(stateRef.current, 下一份历史, 结果.相册, 结果.新增条目);
+      pushQueueTask(
+        stateRef.current,
+        'narrative_image_generate',
+        结果.插图.status === 'failed' ? 'failed' : 'success',
+        {
+          detail: 结果.插图.status === 'failed'
+            ? `重新生成失败：${结果.插图.error ?? '未知原因'}`
+            : `已重新生成这一张。落盘：${落盘.回读确认数}/${落盘.资产数} 张${落盘.成功 ? '（已确认）' : `（未确认：${落盘.原因 ?? '未知'}）`}`,
+          turn: 回合,
+          targetMessageId: messageId,
+        },
+      );
       devLog('net', 'illustration-regenerate-done', { id: 插图.id, status: 结果.插图.status });
       return 结果.插图;
     } catch (err) {
+      // 抛错前把这张还原成失败态：否则它会永远停在「正在生成…」，
+      // 连重试按钮都回不来（卡片那个分支没有任何操作入口）。
+      const 失败原因 = err instanceof Error ? err.message : String(err);
+      stateRef.current.setChatHistory(标记插图失败(stateRef.current.chatHistory, messageId, 插图.id, 失败原因));
+      pushQueueTask(stateRef.current, 'narrative_image_generate', 'failed', {
+        detail: `重新生成失败：${失败原因}`,
+        turn: 回合,
+        targetMessageId: messageId,
+      });
       devLogError('net', 'illustration-regenerate-failed', err, { id: 插图.id });
       throw err;
     }

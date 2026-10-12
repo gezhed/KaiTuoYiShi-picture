@@ -1,4 +1,4 @@
-﻿import { useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { 派生变量批次诊断, type 变量命令批次 } from '@/models/variableCommand';
 import type { 队列任务ID, 队列任务记录, 队列任务状态 } from '@/models/queueTask';
 import { 队列任务可重试 } from '@/hooks/useGame/turnActionRuntime';
@@ -46,6 +46,17 @@ export function VariableDrawer({ batches, tasks, pending, onCancelTask, onRetryT
     latestTaskById.get('phone') ?? createIdleTask('phone', '手机来信', '主动来信种子与通讯入口'),
   ];
 
+  /*
+   * 生图也要在**收起状态**下看得见。
+   *
+   * 自动配图整段可能好几分钟，而它的入口不在聊天区（没有卡片按钮可选），
+   * 用户唯一的常驻线索就是这个侧边把手。变量优先：两件事同时跑时先显示变量。
+   */
+  const 生图进行中 = [latestTaskById.get('narrative_image_parse'), latestTaskById.get('narrative_image_generate')]
+    .some((任务) => 任务?.status === 'pending');
+  const 忙碌 = Boolean(pending) || 生图进行中;
+  const 把手文案 = pending ? '变量正在处理' : 生图进行中 ? '正在生成插图' : '处理队列';
+
   return (
     <>
       <button
@@ -54,7 +65,7 @@ export function VariableDrawer({ batches, tasks, pending, onCancelTask, onRetryT
         style={{
           left: 0,
           width: '24px',
-          height: pending ? 112 : 88,
+          height: 忙碌 ? 112 : 88,
           background: open
             ? 'linear-gradient(135deg, rgba(var(--tj-accent-primary), 0.95), rgba(var(--tj-amber-deep), 0.95))'
             : 'linear-gradient(180deg, rgb(var(--tj-bubble)), rgb(var(--tj-surface-strong)))',
@@ -72,8 +83,8 @@ export function VariableDrawer({ batches, tasks, pending, onCancelTask, onRetryT
         }}
         title={open ? '收起队列' : '展开队列'}
       >
-        {pending ? '变量正在处理' : '处理队列'}
-        {pending && (
+        {把手文案}
+        {忙碌 && (
           <span
             className="absolute right-1 top-1 h-1.5 w-1.5 rounded-full animate-pulse"
             style={{ background: 'rgb(var(--tj-accent-primary))', boxShadow: '0 0 6px rgba(var(--tj-accent-primary), 0.8)' }}

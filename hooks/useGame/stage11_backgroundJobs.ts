@@ -231,8 +231,28 @@ async function runNarrativeImageJob(p: NarrativeJobParams): Promise<NarrativeJob
   }
   const targetMessageId = p.aiMsg.id;
 
+  /*
+   * 先落一条 pending：自动配图整段（LLM 写提示词 + 逐张出图）可能好几分钟，
+   * 而结果只在结束时才写回消息 —— 中间界面上**完全没有任何反馈**，
+   * 用户会以为没触发、又去点手动生图。这条任务同时驱动卡片的运行态与置灰。
+   */
+  pushQueueTask(p.state, 'narrative_image_parse', 'pending', {
+    detail: '正在为正文生成插图（先写提示词，再逐张出图）…',
+    targetMessageId,
+    阶段: '等提示词',
+  }, p.turnCountAtStart, p.queueTasksMirror);
+
   const 结果 = await 生成消息插图(p.state, targetMessageId, p.displayText, undefined, {
     signal: p.abortController.signal,
+    // 出图阶段再报一条（只报第一次），让「等提示词」与「正在出图」在界面上分得开。
+    on进度: (事件) => {
+      if (事件.阶段 !== '出图' || (事件.完成数 ?? 0) > 0) return;
+      pushQueueTask(p.state, 'narrative_image_generate', 'pending', {
+        detail: `正在逐张出图（共 ${事件.总数 ?? 0} 张）…`,
+        targetMessageId,
+        阶段: '出图中',
+      }, p.turnCountAtStart, p.queueTasksMirror);
+    },
   });
   p.assertWorkflowActive();
 

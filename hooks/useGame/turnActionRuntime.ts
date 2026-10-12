@@ -94,8 +94,15 @@ export function 派生回合动作视图(
       running,
       ...(最新任务?.status === 'failed' && 最新任务.detail ? { detail: 最新任务.detail } : {}),
       ...(最新任务?.rawText ? { rawText: 最新任务.rawText } : {}),
-      // 有图片正在生成说明 LLM 那一步已经过了；否则就是在等提示词。
-      ...(running ? { 阶段: images.some((image) => image.status === 'generating') ? '出图中' as const : '等提示词' as const } : {}),
+      // 阶段优先取任务上写明的：图片状态只在「写回消息之后」才可见，
+      // 整轮生成期间消息里根本没有 generating 的图，只能靠任务告诉界面。
+      ...(running
+        ? {
+          阶段: 最新任务?.status === 'pending' && 最新任务.阶段
+            ? 最新任务.阶段
+            : (images.some((image) => image.status === 'generating') ? '出图中' as const : '等提示词' as const),
+        }
+        : {}),
     };
   }
 
