@@ -452,17 +452,42 @@ describe('角色管理面板', () => {
     expect(await screen.findAllByRole('img')).toHaveLength(5);
   });
 
-  it('预览出图：还没写入角色卡时不能预览（预览读的是卡上已保存的内容）', async () => {
-    render(<TestShell 初始={建系统()} 生成预览图={async () => ({ 数据地址: 'x', 宽度: 1, 高度: 1 })} />);
+  it('预览出图：新建模式的卡片还没写入也能预览（用刚生成的内容当角色上下文）', async () => {
+    const 收到: Array<{ 提示词: string; 临时角色?: 角色卡 }> = [];
+    const 生成预览图 = vi.fn(async (提示词: string, 临时角色?: 角色卡) => {
+      收到.push({ 提示词, 临时角色 });
+      return { 数据地址: 'data:image/png;base64,CCCC', 宽度: 512, 高度: 768 };
+    });
+    const 请求生成 = vi.fn(async (): Promise<生成角色特征结果> => ({
+      字段: { nameCN: '可可利亚', characterTraits: 'mature（成熟）', upperBodySFW: 'regal gown（华丽长裙）' },
+      服装: [],
+      未识别: [],
+      原始回复: '<人物>…</人物>',
+      重试次数: 0,
+    }));
+    render(<TestShell 初始={建系统()} 请求生成={请求生成} 生成预览图={生成预览图} />);
     fireEvent.click(await screen.findByRole('button', { name: /流萤/ }));
     fireEvent.click(screen.getByRole('button', { name: /^生成/ }));
 
-    // 切到「新建」目标 → 预览按钮全部禁用并给出理由。
-    // （下拉的占位值由 新建占位 提供，用它的可见文案定位。）
-    const 下拉 = await screen.findByLabelText('目标角色卡');
-    fireEvent.change(下拉, { target: { value: '__新建__' } });
-    expect(await screen.findByText(/这张卡还没写进角色卡表/)).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'sfw · 正面 · 上半身' })).toBeDisabled();
+    // 切到「新建」目标，先生成一次。
+    fireEvent.change(await screen.findByLabelText('目标角色卡'), { target: { value: '__新建__' } });
+    fireEvent.change(screen.getByPlaceholderText(/流萤，星核猎手少女/), { target: { value: '可可利亚' } });
+    fireEvent.click(screen.getByText('一键生成'));
+    await screen.findByDisplayValue('mature（成熟）');
+
+    // 关键：还没点「写入角色卡」也能预览，而且用的是「待写入」的内容。
+    expect(screen.getByText(/用刚生成、还没写入的内容/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'sfw · 正面 · 上半身' }));
+    await waitFor(() => { expect(生成预览图).toHaveBeenCalledTimes(1); });
+
+    // 提示词用的是新名字；临时角色带着刚生成的字段（含角色特征）一起交给上层。
+    expect(收到[0].提示词).toContain('"name":"可可利亚"');
+    expect(收到[0].临时角色?.nameCN).toBe('可可利亚');
+    expect(收到[0].临时角色?.characterTraits).toBe('mature（成熟）');
+    expect(收到[0].临时角色?.upperBodySFW).toBe('regal gown（华丽长裙）');
+
+    // 这里不点「写入角色卡」：角色卡表里不该多出这张卡。
+    expect(screen.getByAltText('sfw · 正面 · 上半身')).toBeInTheDocument();
   });
 
   it('生成页签的预设默认空白，并提示去导入', async () => {

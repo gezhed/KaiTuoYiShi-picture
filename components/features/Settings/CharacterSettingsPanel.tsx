@@ -88,7 +88,7 @@ export function CharacterSettingsPanel({
   /** 重新拉取 LoRA 列表（在角色页直接点，不用切回连接页）。 */
   on拉取LoRA?: () => Promise<string[]>;
   /** 按提示词出一张预览图（「生成角色」页用）。 */
-  生成预览图?: (提示词: string) => Promise<{ 数据地址: string; 宽度: number; 高度: number }>;
+  生成预览图?: (提示词: string, 临时角色?: 角色卡) => Promise<{ 数据地址: string; 宽度: number; 高度: number }>;
 }) {
   const [页, set页] = useState<角色页签>('cards');
   const [选中Id, set选中Id] = useState<string>('');

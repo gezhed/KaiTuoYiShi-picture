@@ -24,6 +24,7 @@ import {
   type 生成角色特征结果,
   type 服装草稿,
 } from '@/services/ai/imageGen/characterFeature';
+import { 组装单图提示词 } from '@/services/ai/imageGen/generateIllustration';
 
 /**
  * 一键生成角色特征。
@@ -119,7 +120,11 @@ export function CharacterAIPanel({
    * 按一段提示词出一张预览图（走上层配置好的生图渠道）。
    * 没提供时「预览出图」整块不显示 —— 免得给一个点了没反应的按钮。
    */
-  生成预览图?: (提示词: string) => Promise<{ 数据地址: string; 宽度: number; 高度: number }>;
+  生成预览图?: (
+    提示词: string,
+    /** 有未写入的生成结果时，用这张「待写入」的卡做角色上下文。 */
+    临时角色?: 角色卡,
+  ) => Promise<{ 数据地址: string; 宽度: number; 高度: number }>;
 }) {
   const [要求, set要求] = useState('');
   const [生成中, set生成中] = useState(false);
@@ -134,7 +139,17 @@ export function CharacterAIPanel({
   const [新建模式, set新建模式] = useState(false);
   const [新卡名称, set新卡名称] = useState('');
   /** 预览出图：结果按预设标签存，方便对照；只留在内存里，不写图库。 */
-  const [预览图, set预览图] = useState<Array<{ 标签: string; 数据地址: string; 宽度: number; 高度: number }>>([]);
+  const [预览图, set预览图] = useState<Array<{
+    标签: string;
+    数据地址: string;
+    宽度: number;
+    高度: number;
+    /** 这一张真正发出去的正负词（本地组装出来的，与引擎同一条路径）。 */
+    正向提示词: string;
+    负向提示词: string;
+    /** 没识别到的 `$…$` 段（名字对不上时会原样留在提示词里）。 */
+    未识别段: string[];
+  }>>([]);
   const [预览中, set预览中] = useState('');
   /** 出图错误按预设标签记录：串行出图时，后一张不能把前一张的报错冲掉。 */
   const [预览错误, set预览错误] = useState<Record<string, string>>({});
@@ -180,6 +195,46 @@ export function CharacterAIPanel({
     }
     return 表;
   }, [可应用字段, 勾选字段]);
+
+  /**
+   * 「写入后会是什么样」的那张卡。
+   *
+   * 写入与预览共用它，保证**预览看到的正是即将写进去的内容**：
+   * 早先预览只读角色卡上已保存的字段，于是刚生成、还没点写入时，
+   * 预览图里看不到「角色特征」等新内容 —— 用起来就像没载入角色特征。
+   */
+  const 待写入卡片 = useMemo(() => {
+    const 基准 = 新建模式 ? 建角色卡(新卡名称.trim() || '新角色') : 目标角色;
+    if (!基准) return undefined;
+    let 卡 = 合并生成字段(基准, 生效字段, [...勾选字段]);
+    const 新服装 = 服装草稿列表
+      .filter((_, 序号) => 勾选服装.has(序号))
+      .map((草稿: 服装草稿) => 服装草稿转条目(草稿));
+    if (追加服装 && 新服装.length > 0) {
+      卡 = { ...卡, outfits: [...(卡.outfits ?? []), ...新服装] };
+    }
+    return 卡;
+  }, [新建模式, 新卡名称, 目标角色, 生效字段, 勾选字段, 服装草稿列表, 勾选服装, 追加服装]);
+
+  /** 预览用哪张卡：有未写入的生成结果就用待写入卡片，否则用角色卡上已保存的。 */
+  const 预览角色 = 结果 ? 待写入卡片 : 目标角色;
+  /** `$…$` 按别名匹配，取中文名的第一个别名。 */
+  const 预览角色名 = ((预览角色?.nameCN || '').split('|')[0] || '').trim();
+
+  /**
+   * 本地组装用的角色上下文。
+   *
+   * 与上层发给引擎的那份保持同一个形状：待写入卡片放在启用列表**最前**，
+   * 这样 `$名字$` 一定命中它（而不是同名的旧卡）。
+   */
+  const 预览上下文 = useMemo(() => {
+    if (!预览角色) return { 启用列表: 设置.角色启用列表, 全部角色: 设置.角色卡 };
+    const 其余 = 设置.角色启用列表.filter((id) => id !== 预览角色.id);
+    return {
+      启用列表: [预览角色.id, ...其余],
+      全部角色: { ...设置.角色卡, [预览角色.id]: 预览角色 },
+    };
+  }, [预览角色, 设置.角色启用列表, 设置.角色卡]);
 
   const 跑生成 = async () => {
     if (!请求生成) {
@@ -238,10 +293,20 @@ export function CharacterAIPanel({
   /** 出一张预览图。预设的提示词与正文里 `$…$` 的写法一致，所以预览即所见。 */
   const 出一张 = async (预设: (typeof 预览预设)[number], 角色名: string) => {
     if (!生成预览图) return;
+    const 标记 = 建预览提示词(角色名, 预设);
+    // 本地先跑一遍组装：这样界面能显示「最终发给模型的正负词」，
+    // 一眼看出角色特征/服装/未识别段到底进没进去（预览出图最常被问的就是这个）。
+    const 组装 = 组装单图提示词(设置, 标记, 预览上下文);
     set预览中(预设.标签);
     try {
-      const 图 = await 生成预览图(建预览提示词(角色名, 预设));
-      set预览图((旧) => [...旧.filter((项) => 项.标签 !== 预设.标签), { 标签: 预设.标签, ...图 }]);
+      const 图 = await 生成预览图(标记, 结果 ? 待写入卡片 : undefined);
+      set预览图((旧) => [...旧.filter((项) => 项.标签 !== 预设.标签), {
+        标签: 预设.标签,
+        ...图,
+        正向提示词: 组装.正向提示词,
+        负向提示词: 组装.负向提示词,
+        未识别段: 组装.未识别段 ?? [],
+      }]);
       set预览错误((旧) => {
         const 下一 = { ...旧 };
         delete 下一[预设.标签];
@@ -268,20 +333,17 @@ export function CharacterAIPanel({
   const 应用 = () => {
     if (!结果) return;
     if (!新建模式 && !目标角色) return;
-    const 基准 = 新建模式 ? 建角色卡(新卡名称.trim() || '新角色') : 目标角色;
-    if (!基准) return;
-    // 用**编辑后**的值写回；空值不覆盖（模型漏字段/被审查时尤其重要）。
-    let 下一 = 合并生成字段(基准, 生效字段, [...勾选字段]);
-    const 新写入服装名: string[] = [];
-    if (追加服装) {
-      const 新服装 = 服装草稿列表
+    if (!待写入卡片) return;
+    // 用**编辑后**的值写回（`待写入卡片` 已经按「勾选 + 空值不覆盖」算好）；
+    // 预览用的是同一份，所以「预览看到的」与「写进去的」一致。
+    // 服装已经由 `待写入卡片` 合并进去了，这里只统计名字与数量 ——
+    // 再合并一次会把同一件衣服写两遍（写回与预览共用同一份，必须只有一个合并点）。
+    const 新写入服装名: string[] = 追加服装
+      ? 服装草稿列表
         .filter((_, 序号) => 勾选服装.has(序号))
-        .map((草稿: 服装草稿) => 服装草稿转条目(草稿));
-      新写入服装名.push(...新服装.map((项) => 项.name));
-      if (新服装.length > 0) {
-        下一 = { ...下一, outfits: [...下一.outfits, ...新服装], updatedAt: Date.now() };
-      }
-    }
+        .map((草稿: 服装草稿) => 服装草稿转条目(草稿).name)
+      : [];
+    const 下一 = 待写入卡片;
     const 写入字段数 = [...勾选字段].filter((键) => (生效字段[键] ?? '').trim().length > 0).length;
     const 写入服装数 = 追加服装
       ? 服装草稿列表.filter((_, 序号) => 勾选服装.has(序号)).length
@@ -647,14 +709,15 @@ export function CharacterAIPanel({
           desc="用刚生成的角色直接出一张图看效果。提示词写法与正文里的 $…$ 完全一致（正面/背面靠 angle，档位靠 upperBody / lowerBody），所以预览看到的就是正文会用的那套字段。图片只留在本页：不写图库、不进缓存。"
         >
           {(() => {
-            // 预览靠 `$角色名-…$` 读取**角色卡上已保存**的内容：没卡就没得读。
-            const 名字 = (当前角色?.nameCN || '').split('|')[0].trim();
-            const 可预览 = Boolean(名字) && !新建模式;
-            const 目标说明 = 新建模式
-              ? '这张卡还没写进角色卡表 —— 先点上面的「写入角色卡」，再回来预览。'
-              : !名字
-                ? '还没选目标角色卡。'
-                : `目标角色：${名字}`;
+            /*
+             * 预览用「待写入卡片」：没写入也能预览，且预览内容就是即将写进去的内容。
+             * 只有**完全没有卡**时（新建模式且还没生成）才不可预览。
+             */
+            const 名字 = 预览角色名;
+            const 可预览 = Boolean(名字);
+            const 目标说明 = !名字
+              ? '还没有可预览的角色：先选一个目标角色卡，或在「新建」模式下先生成一次。'
+              : `预览角色：${名字}（${结果 ? '用刚生成、还没写入的内容' : '用角色卡上已保存的内容'}）`;
             return (
               <>
                 <div className="flex flex-wrap items-center gap-2">
@@ -676,7 +739,7 @@ export function CharacterAIPanel({
                 {可预览 && 结果 ? (
                   <提示条
                     kind="info"
-                    text="当前有还没写入的生成结果：预览用的是角色卡里**已保存**的内容，想看到新内容请先点「写入角色卡」。"
+                    text="预览用的是**当前草稿**（含你刚改的字段与勾选的服装），所以它等于「写入后会出什么图」；点「写入角色卡」只是把它存下来。"
                   />
                 ) : null}
 
@@ -708,8 +771,20 @@ export function CharacterAIPanel({
                           className="w-full cursor-zoom-in object-cover"
                           style={{ border: '1px solid rgba(var(--tj-accent-primary), var(--tj-edge-tint))', maxHeight: 220 }}
                         />
-                        <figcaption className="text-[10px]" style={{ color: 'rgba(var(--tj-text-secondary), 0.78)' }}>
-                          {图.标签}（{图.宽度}×{图.高度}）
+                        <figcaption className="space-y-0.5 text-[10px]" style={{ color: 'rgba(var(--tj-text-secondary), 0.78)' }}>
+                          <div>{图.标签}（{图.宽度}×{图.高度}）</div>
+                          {图.未识别段.length > 0 ? (
+                            <div style={{ color: 'rgb(var(--tj-danger))' }}>
+                              有 {图.未识别段.length} 段没识别：{图.未识别段.join('、')}
+                            </div>
+                          ) : null}
+                          <details>
+                            <summary className="cursor-pointer">最终提示词</summary>
+                            <div className="mt-0.5 whitespace-pre-wrap font-mono leading-relaxed">
+                              {图.正向提示词}
+                              {'\n负：'}{图.负向提示词 || '（空）'}
+                            </div>
+                          </details>
                         </figcaption>
                       </figure>
                     ))}
