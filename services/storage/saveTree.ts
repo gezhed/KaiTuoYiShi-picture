@@ -9,6 +9,7 @@ import { buildSaveSummary, isUnsealedHeadSave, type SaveWithTree, type StoredSav
 import { loadRawSave, restoreDeltaSaveIfNeeded } from './saveRecord';
 import { deleteManagedSaveItems, findAutoDeltaBase, getSaveCatalogSnapshot, loadSave, loadSaveIdByNodeId, saveGame } from './saveCrud';
 import { createCatalogRecordFromSummary } from '@/services/storage/saveCatalog';
+import { 对账并补齐磁盘 } from '@/services/storage/diskPersistence';
 import { runWithSaveMutationPriority } from '@/services/storage/saveCatalogRepair';
 import { openDB, SAVES_STORE, SAVE_SUMMARIES_STORE, SAVE_NODE_DELTAS_STORE, SAVE_ASSETS_STORE, NEWEST_STORY_STORE } from './dbConnection';
 import { buildDeltaOnlyStoredSave, buildSaveNodeDeltaRecord, isDeltaOnlyStoredSave } from '@/utils/saveDeltaStorage';
@@ -29,6 +30,12 @@ export async function createLeafNode(payload: 存档数据): Promise<LeafNodeRes
   const tree = (withMarker as SaveWithTree).saveTree;
   if (!tree?.nodeId) {
     throw new Error('创建叶子节点失败：缺少 saveTree 元信息。');
+  }
+  // 手动存档 / 导入存档：此时对账一次（频率低、时机明确）。
+  if (payload.type !== 'auto') {
+    await 对账并补齐磁盘().catch((error: unknown) => {
+      devLogError('save', 'manual-save-reconcile-failed', error);
+    });
   }
   return { saveId, saveTree: tree };
 }
@@ -105,6 +112,12 @@ export async function sealLeafRow(sealedPayload: 存档数据): Promise<void> {
       await compressAutoSaveWindow(rootId).catch((error: unknown) => {
         devLogError('save', 'auto-window-compress-failed', error);
       });
+      // 只在刚落全量（检查点）时对账一次，避免频繁全库操作。
+      if (deltaBase === null) {
+        await 对账并补齐磁盘().catch((error: unknown) => {
+          devLogError('save', 'checkpoint-reconcile-failed', error);
+        });
+      }
     }
   }
 }
@@ -138,8 +151,22 @@ export async function compressAutoSaveWindow(rootId: string): Promise<number> {
     chain.push(item);
     cursor = item.saveTree?.parentNodeId ?? null;
   }
-  if (chain.length <= AUTO_WINDOW_DELTAS + 1) return 0;
   const drop = chain.slice(AUTO_WINDOW_DELTAS + 1);
+  // 除当前链外，其它「整棵都是自动档」的树也一并清除（同步分叉留下的噪声树；含手动/导入的树一律不动）。
+  const 当前根 = chain[0]?.saveTree?.rootId ?? null;
+  const 按根 = new Map<string, SaveListItemSummary[]>();
+  for (const item of catalog.items) {
+    const 根 = item.saveTree?.rootId;
+    if (!根 || !item.saveTree?.nodeId) continue;
+    const 组 = 按根.get(根) ?? [];
+    组.push(item);
+    按根.set(根, 组);
+  }
+  for (const [根, 组] of 按根) {
+    if (根 === 当前根) continue;
+    if (组.every((项) => 项.type === 'auto')) drop.push(...组);
+  }
+  if (!drop.length) return 0;
   const keepOldest = chain[AUTO_WINDOW_DELTAS];
   const nextParentNodeId = drop[drop.length - 1]?.saveTree?.parentNodeId ?? null;
   const db = await openDB();
