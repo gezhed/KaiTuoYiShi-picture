@@ -11,6 +11,7 @@ import { 生成单张插图, 重写提示词标记 } from '@/services/ai/imageGe
 import type { 角色匹配上下文 } from '@/services/ai/imageGen/characterPrompt';
 import { 主按钮, 面板, 提示条, 次级按钮, 开关行, 页签条, 设置字段 as 字段 } from '@/components/features/Settings/settingsPrimitives';
 import { ImageLightbox, type 查看图片项 } from './ImageLightbox';
+import { CharacterBlockTool } from './CharacterBlockTool';
 import { AvatarEditorDialog } from './AvatarWorkbench';
 import { SlotApplyDialog } from './SlotApplyDialog';
 import { GalleryWorkspace, type 图库条目选中 } from '@/components/features/GameSystems/album/GalleryWorkspace';
@@ -168,6 +169,33 @@ export function ImageWorkbenchPanel({
     }));
   }, [traveler, npcs, album]);
 
+  /** 提示词输入框：小工具要把块插到光标处，所以得拿到它。 */
+  const 提示词框 = useRef<HTMLTextAreaElement | null>(null);
+
+  /** 把变量块插到光标处（没聚焦过就追加到末尾，并补一个逗号分隔）。 */
+  const 插入角色块 = (块: string) => {
+    const 元素 = 提示词框.current;
+    if (!元素) {
+      set提示词((旧) => (旧.trim() ? `${旧.replace(/[,\s]+$/, '')}, ${块}` : 块));
+      return;
+    }
+    const 起 = 元素.selectionStart ?? 提示词.length;
+    const 止 = 元素.selectionEnd ?? 起;
+    const 前 = 提示词.slice(0, 起);
+    const 后 = 提示词.slice(止);
+    // 前后各补一个「, 」：块黏在别的 tag 上会被当成同一个词。
+    const 左 = 前.trim().length > 0 && !/[,\s(]$/.test(前) ? `${前}, ` : 前;
+    const 右 = 后.trim().length > 0 && !/^[,\s)]/.test(后) ? `, ${后}` : 后;
+    const 下一 = `${左}${块}${右}`;
+    set提示词(下一);
+    // 光标落到块之后，方便接着选下一个角色。
+    requestAnimationFrame(() => {
+      元素.focus();
+      const 位置 = 左.length + 块.length;
+      元素.setSelectionRange(位置, 位置);
+    });
+  };
+
   const 处理出图 = async () => {
     if (!提示词.trim()) {
       set提示({ kind: 'error', text: '请先写提示词。' });
@@ -198,7 +226,16 @@ export function ImageWorkbenchPanel({
         note: `种子 ${结果.结果.种子}`,
       });
       onAlbumChange(添加图片到相册(album, 条目));
-      set提示({ kind: 'ok', text: `生成完成：${结果.结果.宽度}x${结果.结果.高度}，种子 ${结果.结果.种子}。` });
+      // 提示词里如果有没识别的 `$…$` 段，出图结果看着正常但角色根本没进去 ——
+      // 这是手动出图最需要看到的一条反馈，所以直接顶掉「生成完成」。
+      set提示(结果.未识别段.length > 0
+        ? {
+          kind: 'error',
+          text: `生成完成（${结果.结果.宽度}x${结果.结果.高度}），但有 ${结果.未识别段.length} 段没匹配到角色：`
+            + `${结果.未识别段.join('、')} —— 它们被原样发给了模型，等于没生效。`
+            + '名字要等于角色卡上的中文名/英文名（可用 | 分隔别名）。',
+        }
+        : { kind: 'ok', text: `生成完成：${结果.结果.宽度}x${结果.结果.高度}，种子 ${结果.结果.种子}。` });
       // 新图已写入缓存：立刻重列，用户能当场看到它出现在「图片缓存」里。
       await 刷新缓存();
     } catch (错误) {
@@ -293,12 +330,18 @@ export function ImageWorkbenchPanel({
         <面板 title="手动出图" desc="提示词会先过替换规则、角色替换与正负词组装，再按占位符写入工作流。">
           <字段 label="提示词" hint="可以写 image###提示词### 形式；裸文本也接受。末尾写 960x1280 可覆盖分辨率。">
             <textarea
+              ref={提示词框}
               className="kaituo-input h-32 w-full px-3 py-2 text-sm leading-relaxed"
               value={提示词}
               onChange={(事件) => set提示词(事件.target.value)}
               placeholder="1girl, solo, silver hair, night city"
             />
           </字段>
+
+          <CharacterBlockTool
+            角色列表={Object.values(系统.角色卡)}
+            on插入={插入角色块}
+          />
           <字段 label="尺寸">
             <input
               className="kaituo-input w-full px-3 py-2 text-sm font-mono"

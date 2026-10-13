@@ -47,6 +47,25 @@ export interface 角色提示词结果 extends 角色替换结果 {
   未识别段: string[];
 }
 
+/**
+ * `angle` 是不是「背面」。
+ *
+ * 上游只认 `from behind` 这一种写法；但 JSON 形式的 `angle` 是人手写/AI 生成的
+ * （`behind view`、`back view`、`背面` 都很自然），认不出来就会去取**正面**字段 ——
+ * 出了个正面图，还查不出原因。这里放宽成：含 `behind` / `back view` / `rear`，
+ * 或中文的「背面 / 背后 / 后背」。
+ */
+export function 是背面角度(angle: string | undefined): boolean {
+  const 文本 = (angle ?? '').trim().toLowerCase();
+  if (!文本) return false;
+  return 文本.includes('behind')
+    || 文本.includes('back view')
+    || 文本.includes('rear')
+    || 文本.includes('背面')
+    || 文本.includes('背后')
+    || 文本.includes('后背');
+}
+
 export function 归一化名称(名称: string): string {
   return (名称 ?? '')
     .toLowerCase()
@@ -435,7 +454,7 @@ export function 处理角色提示词(提示词: string, 上下文: 角色匹配
       return 完整;
     }
     const { 解析, 是服装 } = 解析结果;
-    const fromBehind = (解析.angle ?? '').toLowerCase().includes('from behind');
+    const fromBehind = 是背面角度(解析.angle);
 
     if (是服装) {
       const 服装 = 查找最佳服装(解析.名称, 上下文);
@@ -519,7 +538,7 @@ export function 提取出场角色(提示词: string, 上下文: 角色匹配上
     const 角色 = 查找最佳角色(解析结果.解析.名称, 上下文);
     if (!角色 || 已见.has(角色.id)) return 完整;
     已见.add(角色.id);
-    const fromBehind = (解析结果.解析.angle ?? '').toLowerCase().includes('from behind');
+    const fromBehind = 是背面角度(解析结果.解析.angle);
     const 替换 = 拼装角色替换(角色, {
       upper: 解析结果.解析.upper ?? 'hidden',
       lower: 解析结果.解析.lower ?? 'hidden',

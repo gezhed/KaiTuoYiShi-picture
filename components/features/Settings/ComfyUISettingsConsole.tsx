@@ -14,7 +14,6 @@ import {
 } from './settingsPrimitives';
 import { CharacterSettingsPanel } from './CharacterSettingsPanel';
 import { TagVocabularyPanel } from './TagVocabularyPanel';
-import { 生成单张插图, 重写提示词标记 } from '@/services/ai/imageGen/generateIllustration';
 import { 预告参考图 } from '@/services/ai/imageGen/referenceImage';
 import { NovelAI模型目录 } from '@/services/ai/imageGen/novelaiClient';
 import { 读取SD资源列表, type SD可选资源 } from '@/services/ai/imageGen/sdClient';
@@ -1084,27 +1083,6 @@ export function ComfyUISettingsConsole({
           主API地址={主API地址}
           onFetchModels={onFetchModels}
           LoRA列表={资源?.lora ?? []}
-          生成预览图={async (提示词, 临时角色) => {
-            // 与「手动生图」走同一条管线（同渠道、同角色替换、同缓存策略），
-            // 只是不写图库/缓存：预览图属于一次性对照。
-            // `临时角色` = 还没写入角色卡的草稿（含刚生成、还没保存的字段），
-            // 放在启用列表最前，保证 `$名字$` 命中它而不是同名旧卡。
-            const 结果 = await 生成单张插图(
-              系统,
-              { 提示词标记: 重写提示词标记(提示词), 标题: '角色预览', 写缓存: false },
-              临时角色
-                ? {
-                  启用列表: [临时角色.id, ...系统.角色启用列表],
-                  全部角色: { ...系统.角色卡, [临时角色.id]: 临时角色 },
-                }
-                : { 启用列表: 系统.角色启用列表, 全部角色: 系统.角色卡 },
-            );
-            return {
-              数据地址: 结果.结果.数据地址,
-              宽度: 结果.结果.宽度,
-              高度: 结果.结果.高度,
-            };
-          }}
           on拉取LoRA={async () => {
             // 角色卡编辑页里也能拉：省得为了挑一个 LoRA 来回切页签。
             const 结果 = await onFetchResources(档案?.连接.地址 ?? '');
