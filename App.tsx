@@ -11,6 +11,7 @@ import {
 import type { AlbumImportMode } from '@/components/features/GameSystems/album/albumArchive';
 import { 写入相册设定 } from '@/utils/avatarActions';
 import { LiveSyncBridge } from '@/components/features/Chat/LiveSyncBridge';
+import { 发送远程输入, 是主机端 } from '@/services/localSave/liveSync';
 import { devLog, devLogError } from '@/utils/devLog';
 import { LandingPage } from '@/components/features/Home/LandingPage';
 import { HomeTransitionOverlay, MysteryChatModal } from '@/components/features/Home/HomeOverlays';
@@ -474,7 +475,14 @@ export function App() {
       ) : null}
       <InputArea
         key={state.activeWorkflow.sessionEpoch}
-        onSend={(text) => { void actions.handleSend(text); }}
+        onSend={(text) => {
+          if (是主机端()) {
+            void actions.handleSend(text);
+            return;
+          }
+          // 遥控端（手机，局域网）：不本地生成，把输入转给主机去跑。
+          void 发送远程输入(text);
+        }}
         onAbort={actions.handleAbort}
         loading={state.activeWorkflow.loading}
         disabled={state.activeWorkflow.pendingVariable}
@@ -729,7 +737,10 @@ export function App() {
 
   return (
     <>
-      <LiveSyncBridge on同步={() => { void actions.handleContinue(); }} />
+      <LiveSyncBridge
+        on同步={() => { void actions.handleContinue(); }}
+        on远程输入={(text) => { void actions.handleSend(text); }}
+      />
       <GameView
         weatherId={state.世界.当前天气}
         topBar={topBar}

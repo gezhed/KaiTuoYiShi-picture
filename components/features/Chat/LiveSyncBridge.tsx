@@ -8,6 +8,8 @@ import { 订阅实时事件, 读取客户端ID } from '@/services/localSave/live
 interface LiveSyncBridgeProps {
   /** 原地载入最新工作区（应用自带的「继续」动作，不重载页面）。缺省时退化为手动刷新按钮。 */
   on同步?: () => void;
+  /** 主机端：收到遥控端转来的用户输入时，像本机打字一样触发发送。 */
+  on远程输入?: (text: string) => void;
 }
 
 /**
@@ -19,7 +21,7 @@ interface LiveSyncBridgeProps {
  *
  * 只在「本会话真见过生成」时才同步；空闲结束一律不触发——避免跨设备互相触发。
  */
-export function LiveSyncBridge({ on同步 }: LiveSyncBridgeProps): ReactElement | null {
+export function LiveSyncBridge({ on同步, on远程输入 }: LiveSyncBridgeProps): ReactElement | null {
   const [正在输入, set正在输入] = useState(false);
   const [提示, set提示] = useState('');
   const [可刷新, set可刷新] = useState(false);
@@ -51,6 +53,11 @@ export function LiveSyncBridge({ on同步 }: LiveSyncBridgeProps): ReactElement 
         set提示('');
         return;
       }
+      if (事件.kind === 'user-input' && typeof 事件.text === 'string') {
+        // 主机端：遥控端发来的输入 → 像用户自己打字一样触发发送。
+        if (!回放) on远程输入?.(事件.text);
+        return;
+      }
       if (事件.kind === 'turn-done' || 事件.kind === 'turn-idle') {
         set正在输入(false);
         set提示('');
@@ -62,7 +69,7 @@ export function LiveSyncBridge({ on同步 }: LiveSyncBridgeProps): ReactElement 
         }
       }
     });
-  }, [on同步]);
+  }, [on同步, on远程输入]);
 
   if (!正在输入 && !提示 && !可刷新) return null;
   return (

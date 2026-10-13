@@ -21,6 +21,17 @@ export function 读取客户端ID(): string {
   return 客户端ID;
 }
 
+/** 本端是不是「主机」：走 localhost 打开的那台才是（它跑生成、拥有状态）；从局域网 IP 进来的（手机）是遥控/显示端。 */
+export function 是主机端(): boolean {
+  const 主机 = globalThis.location.hostname;
+  return 主机 === 'localhost' || 主机 === '127.0.0.1' || 主机 === '::1' || 主机 === '[::1]';
+}
+
+/** 遥控端把用户输入转给主机（不发本地）。 */
+export async function 发送远程输入(text: string): Promise<void> {
+  await 发布实时事件({ kind: 'user-input', source: 'remote', text });
+}
+
 /** 发布一条实时事件；通道不可用时静默忽略。 */
 export async function 发布实时事件(载荷: Record<string, unknown>): Promise<void> {
   try {
