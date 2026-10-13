@@ -26,12 +26,20 @@ export function LiveSyncBridge({ on同步, on远程输入 }: LiveSyncBridgeProps
   const [提示, set提示] = useState('');
   const [可刷新, set可刷新] = useState(false);
   const 见过活动 = useRef(false);
+  const on同步Ref = useRef(on同步);
+  const on远程输入Ref = useRef(on远程输入);
+
+  // 回调存到 ref：订阅只建立一次，避免父组件每次渲染都重连 SSE。
+  useEffect(() => {
+    on同步Ref.current = on同步;
+    on远程输入Ref.current = on远程输入;
+  }, [on同步, on远程输入]);
 
   // 把「就地同步」注册到全局，供跨设备弹条等非 React 浮层调用（避免整页重载）。
   useEffect(() => {
-    注册就地同步(on同步 ?? null);
+    注册就地同步(() => on同步Ref.current?.());
     return () => { 注册就地同步(null); };
-  }, [on同步]);
+  }, []);
 
   useEffect(() => {
     const 我 = 读取客户端ID();
@@ -55,7 +63,7 @@ export function LiveSyncBridge({ on同步, on远程输入 }: LiveSyncBridgeProps
       }
       if (事件.kind === 'user-input' && typeof 事件.text === 'string') {
         // 主机端：遥控端发来的输入 → 像用户自己打字一样触发发送。
-        if (!回放) on远程输入?.(事件.text);
+        if (!回放) on远程输入Ref.current?.(事件.text);
         return;
       }
       if (事件.kind === 'turn-done' || 事件.kind === 'turn-idle') {
@@ -64,12 +72,12 @@ export function LiveSyncBridge({ on同步, on远程输入 }: LiveSyncBridgeProps
         setStreamingMessage('');
         if (!回放 && 见过活动.current) {
           见过活动.current = false;
-          if (on同步) on同步();
+          if (on同步Ref.current) on同步Ref.current();
           else set可刷新(true);
         }
       }
     });
-  }, [on同步, on远程输入]);
+  }, []);
 
   if (!正在输入 && !提示 && !可刷新) return null;
   return (

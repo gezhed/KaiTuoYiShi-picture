@@ -5,7 +5,7 @@ import type { 角色数据结构 } from '@/models/character';
 import type { VisualTextSettings } from '@/models/settings';
 import type { 相册系统 } from '@/models/imageGeneration';
 import { useStreamingMessage } from '@/utils/streamingMessageStore';
-import { 发布实时事件 } from '@/services/localSave/liveSync';
+import { 发布实时事件, 是主机端 } from '@/services/localSave/liveSync';
 import type { TurnActionsApi, 回合动作上下文 } from '@/hooks/useGame/turnActionRuntime';
 import { TurnItem } from './TurnItem';
 import { mediumClip } from '@/components/ui/clipPaths';
@@ -162,9 +162,10 @@ function buildNeighborMeta(messages: 聊天消息[]): NeighborMeta[] {
 export function ChatList({ messages, loading, scrollRef, onEditBody, turnActions, turnActionContext, narrativeImageManualEnabled = false, 插图显示, 逐句推进, npcRecords, traveler, album, showInnerVoice = true, visualTextSettings, devMode = false, onIllustrationRegenerate, onIllustrationRerollPrompts }: ChatListProps) {
   const streamingMessage = useStreamingMessage();
   const 曾活跃 = useRef(false);
-  // 主机：把流式文字 / 「正在输入」推上实时通道；**只在真发生过生成后**才发一次「结束」，
-  // 绝不把“本来就空闲”当成事件（否则每台空闲设备都发 turn-done → 跨设备无限刷新）。
+  // 只有「主机」才广播；遥控端（手机）只是显示，绝不转发——否则它会把桥接写入的流式文字
+  // 当成自己在生成又广播出去，与主机形成回声环路（“开拓进行中”刷屏 / 崩溃）。
   useEffect(() => {
+    if (!是主机端()) return;
     if (streamingMessage) {
       曾活跃.current = true;
       void 发布实时事件({ kind: 'stream', source: 'host', text: streamingMessage });
