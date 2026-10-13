@@ -161,13 +161,22 @@ function buildNeighborMeta(messages: 聊天消息[]): NeighborMeta[] {
 
 export function ChatList({ messages, loading, scrollRef, onEditBody, turnActions, turnActionContext, narrativeImageManualEnabled = false, 插图显示, 逐句推进, npcRecords, traveler, album, showInnerVoice = true, visualTextSettings, devMode = false, onIllustrationRegenerate, onIllustrationRerollPrompts }: ChatListProps) {
   const streamingMessage = useStreamingMessage();
-  // 主机：把流式文字 / 「正在输入」状态推上实时通道，供其它设备实时同步。
+  const 曾活跃 = useRef(false);
+  // 主机：把流式文字 / 「正在输入」推上实时通道；**只在真发生过生成后**才发一次「结束」，
+  // 绝不把“本来就空闲”当成事件（否则每台空闲设备都发 turn-done → 跨设备无限刷新）。
   useEffect(() => {
     if (streamingMessage) {
+      曾活跃.current = true;
       void 发布实时事件({ kind: 'stream', source: 'host', text: streamingMessage });
-    } else if (loading) {
+      return;
+    }
+    if (loading) {
+      曾活跃.current = true;
       void 发布实时事件({ kind: 'typing', source: 'host' });
-    } else {
+      return;
+    }
+    if (曾活跃.current) {
+      曾活跃.current = false;
       void 发布实时事件({ kind: 'turn-done', source: 'host' });
     }
   }, [streamingMessage, loading]);

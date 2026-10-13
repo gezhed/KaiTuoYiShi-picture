@@ -16,6 +16,7 @@ export function LiveSyncBridge(): ReactElement | null {
   const [正在输入, set正在输入] = useState(false);
   const [提示, set提示] = useState('');
   const 重载计时 = useRef<number | null>(null);
+  const 见过活动 = useRef(false);
 
   useEffect(() => {
     const 我 = 读取客户端ID();
@@ -24,12 +25,14 @@ export function LiveSyncBridge(): ReactElement | null {
       if (!回放 && 事件.clientId === 我) return;
 
       if (事件.kind === 'stream' && typeof 事件.text === 'string') {
+        if (!回放) 见过活动.current = true;
         set正在输入(false);
         set提示(回放 ? '（该生成可能因刷新而中断）' : '');
         setStreamingMessage(事件.text);
         return;
       }
       if (事件.kind === 'typing') {
+        if (!回放) 见过活动.current = true;
         set正在输入(true);
         set提示('');
         return;
@@ -38,8 +41,10 @@ export function LiveSyncBridge(): ReactElement | null {
         set正在输入(false);
         set提示('');
         setStreamingMessage('');
-        // 只有「现场」的结束才触发自动重载：回放的结束不能重载，否则刷新后会无限重载。
-        if (!回放 && 重载计时.current === null) {
+        // 只有「现场 + 本会话真见过生成」的结束才自动重载：
+        // 否则任意空闲设备发的 turn-done 会造成跨设备无限刷新（电脑的生成会被反复打断）。
+        if (!回放 && 见过活动.current && 重载计时.current === null) {
+          见过活动.current = false;
           重载计时.current = window.setTimeout(() => { window.location.reload(); }, 1800);
         }
       }

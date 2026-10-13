@@ -6,6 +6,16 @@
  */
 let 本地可用: boolean | null = null;
 
+/** 中转开关：默认关闭——AI 直连，确保游戏本体绝不受中转任何问题影响。
+ *  开启：浏览器控制台执行 localStorage.setItem('kty.aiRelay','on') 后刷新。 */
+function 中转已启用(): boolean {
+  try {
+    return globalThis.localStorage.getItem('kty.aiRelay') === 'on';
+  } catch {
+    return false;
+  }
+}
+
 function 归一化请求头(原始: RequestInit['headers']): Record<string, string> {
   const 头: Record<string, string> = {};
   if (!原始) return 头;
@@ -23,6 +33,7 @@ function 归一化请求头(原始: RequestInit['headers']): Record<string, stri
 
 /** 经本地服务端中转一次流式请求；不可用或失败时返回 null（调用方回退直连）。 */
 export async function 尝试本地中转(url: string, init: RequestInit): Promise<Response | null> {
+  if (!中转已启用()) return null;
   if (本地可用 === false) return null;
   if (typeof init.body !== 'string' || !init.body) return null;
   const 载荷 = JSON.stringify({
