@@ -60,8 +60,10 @@ export function 处理实时订阅(req: IncomingMessage, res: ServerResponse): v
   响应.setHeader('connection', 'keep-alive');
   响应.setHeader('x-accel-buffering', 'no');
   响应.write('retry: 2000\n\n');
+  // 回放帧打 replay: true 标记：客户端据此区分「历史回放」与「现场事件」，
+  // 避免刚连上就把历史 turn-done 当成现场事件而陷入重载循环。
   for (const 事件 of 事件表) {
-    响应.write(`data: ${JSON.stringify(事件)}\n\n`);
+    响应.write(`data: ${JSON.stringify({ ...事件, replay: true })}\n\n`);
   }
   订阅者.add(响应);
   if (心跳 === null) {

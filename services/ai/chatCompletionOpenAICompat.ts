@@ -1,4 +1,5 @@
 import { appendApiErrorReport } from './apiErrorReportService';
+import { 尝试本地中转 } from './aiRelayClient';
 import { buildArkProxyBody, normalizeArkBaseUrl } from './arkProxyCore';
 import { buildClineProxyBody, normalizeClineBaseUrl } from './clineProxyCore';
 import { normalizePioneerBaseUrl } from './pioneerProxyCore';
@@ -186,6 +187,11 @@ export async function fetchWithApiErrorReport(
   init: RequestInit,
 ): Promise<Response> {
   try {
+    // B：流式请求优先走本地服务端中转（服务端转发上游并把正文广播给多端）；不可用则回退直连。
+    if (requestMode === 'stream') {
+      const 中转 = await 尝试本地中转(url, init);
+      if (中转) return 中转;
+    }
     return await fetch(url, init);
   } catch (error) {
     if (error && typeof error === 'object') {

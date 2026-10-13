@@ -12,13 +12,22 @@ export interface 实时事件 {
 
 const 前缀 = '/api/live';
 
+/** 本标签页的客户端标识：发布时附带，订阅时用来忽略自己发出的事件（避免主机自刷）。 */
+const 客户端ID = typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+  ? crypto.randomUUID()
+  : `client_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+
+export function 读取客户端ID(): string {
+  return 客户端ID;
+}
+
 /** 发布一条实时事件；通道不可用时静默忽略。 */
 export async function 发布实时事件(载荷: Record<string, unknown>): Promise<void> {
   try {
     await fetch(`${前缀}/publish`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(载荷),
+      body: JSON.stringify({ ...载荷, clientId: 客户端ID }),
     });
   } catch {
     // 实时通道只是增强，不可用则忽略。

@@ -1,38 +1,53 @@
 import type { ReactElement } from 'react';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
-import { 订阅实时事件 } from '@/services/localSave/liveSync';
-
-type 远程状态 = 'idle' | 'typing' | 'stream';
+import { setStreamingMessage } from '@/utils/streamingMessageStore';
+import { 订阅实时事件, 读取客户端ID } from '@/services/localSave/liveSync';
 
 /**
- * 观众端实时浮层（P1）：订阅实时通道，显示"另一台设备正在输入 / 正在生成"的实时文字。
- * 主机侧的发布在 ChatList（它持有流式文字）。
+ * 观众端实时同步（P2/P3）：
+ * - `stream`：写入 streamingMessageStore → 聊天列表直接渲染成"生成中"消息（回放亦可，用于刷新后恢复显示）；
+ * - `typing`：显示「另一台设备正在输入…」；
+ * - `turn-done`：清空本地流式文字；**仅当这是现场事件（非回放）**才延时自动重载拉取（防重载循环）。
+ *
+ * 主机侧的发布在 ChatList；本组件忽略自己发出的现场事件，主机不会自刷。
  */
 export function LiveSyncBridge(): ReactElement | null {
-  const [远程文本, set远程文本] = useState('');
-  const [状态, set状态] = useState<远程状态>('idle');
+  const [正在输入, set正在输入] = useState(false);
+  const [提示, set提示] = useState('');
+  const 重载计时 = useRef<number | null>(null);
 
-  useEffect(
-    () => 订阅实时事件((事件) => {
+  useEffect(() => {
+    const 我 = 读取客户端ID();
+    return 订阅实时事件((事件) => {
+      const 回放 = 事件.replay === true;
+      if (!回放 && 事件.clientId === 我) return;
+
       if (事件.kind === 'stream' && typeof 事件.text === 'string') {
-        const 文本 = 事件.text;
-        if (文本) {
-          set远程文本(文本);
-          set状态('stream');
-        }
-      } else if (事件.kind === 'typing') {
-        set远程文本('');
-        set状态('typing');
-      } else if (事件.kind === 'turn-done' || 事件.kind === 'turn-idle') {
-        set远程文本('');
-        set状态('idle');
+        set正在输入(false);
+        set提示(回放 ? '（该生成可能因刷新而中断）' : '');
+        setStreamingMessage(事件.text);
+        return;
       }
-    }),
-    [],
-  );
+      if (事件.kind === 'typing') {
+        set正在输入(true);
+        set提示('');
+        return;
+      }
+      if (事件.kind === 'turn-done' || 事件.kind === 'turn-idle') {
+        set正在输入(false);
+        set提示('');
+        setStreamingMessage('');
+        // 只有「现场」的结束才触发自动重载：回放的结束不能重载，否则刷新后会无限重载。
+        if (!回放 && 重载计时.current === null) {
+          重载计时.current = window.setTimeout(() => { window.location.reload(); }, 1800);
+        }
+      }
+    });
+  }, []);
 
-  if (状态 === 'idle') return null;
+  const 文案 = 正在输入 ? '另一台设备正在输入…' : 提示;
+  if (!文案) return null;
   return (
     <div
       style={{
@@ -41,22 +56,16 @@ export function LiveSyncBridge(): ReactElement | null {
         bottom: 16,
         transform: 'translateX(-50%)',
         zIndex: 2147483000,
-        maxWidth: 'min(92vw, 560px)',
-        maxHeight: '38vh',
-        overflow: 'auto',
-        padding: '10px 14px',
+        padding: '8px 14px',
         borderRadius: 10,
         background: 'rgba(22,26,36,0.97)',
         border: '1px solid rgba(126,180,255,0.45)',
         color: '#e8eef8',
-        font: '13px/1.6 system-ui, -apple-system, sans-serif',
+        font: '13px/1.5 system-ui, -apple-system, sans-serif',
         boxShadow: '0 8px 28px rgba(0,0,0,0.45)',
       }}
     >
-      <div style={{ opacity: 0.7, fontSize: 11, marginBottom: 6 }}>
-        {状态 === 'typing' ? '另一台设备正在输入…' : '另一台设备正在生成…'}
-      </div>
-      {远程文本 && <div style={{ whiteSpace: 'pre-wrap' }}>{远程文本.slice(-1000)}</div>}
+      {文案}
     </div>
   );
 }

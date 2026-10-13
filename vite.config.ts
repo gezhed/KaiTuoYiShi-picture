@@ -18,6 +18,7 @@ import {
   校验局域网访问,
 } from './services/localSave/server/lanInfo';
 import { 发布实时事件, 处理实时订阅, 读取实时事件 } from './services/localSave/server/liveBus';
+import { 转发AI流, type AI中转请求 } from './services/localSave/server/aiRelay';
 
 function readRequestBody(req: import('node:http').IncomingMessage): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -216,7 +217,7 @@ function 安装局域网门禁(middlewares: 中间件宿主, 取端口: () => nu
 function 安装实时通道(middlewares: 中间件宿主): void {
   middlewares.use((req, res, next) => {
     const url = 解析请求URL(req);
-    if (!url || !url.pathname.startsWith('/api/live')) {
+    if (!url || !(url.pathname.startsWith('/api/live') || url.pathname.startsWith('/api/ai'))) {
       next();
       return;
     }
@@ -234,6 +235,46 @@ function 安装实时通道(middlewares: 中间件宿主): void {
           // 解析失败则保留空对象
         }
         jsonResponse(res, 200, { ok: true, seq: 发布实时事件(载荷).seq });
+      })();
+      return;
+    }
+    if (url.pathname === '/api/ai/stream' && req.method === 'POST') {
+      void (async () => {
+        const 原始 = await readRequestBody(req).catch(() => '');
+        let 载荷: AI中转请求;
+        try {
+          载荷 = JSON.parse(原始) as AI中转请求;
+        } catch {
+          jsonResponse(res, 400, { ok: false, error: 'bad-json' });
+          return;
+        }
+        const 控制器 = new AbortController();
+        req.on('close', () => 控制器.abort());
+        const 响应 = res;
+        try {
+          const 上游 = await 转发AI流(载荷, 控制器.signal);
+          响应.statusCode = 上游.status;
+          上游.headers.forEach((值, 键) => {
+            const 小写 = 键.toLowerCase();
+            if (小写 !== 'content-encoding' && 小写 !== 'content-length') 响应.setHeader(键, 值);
+          });
+          if (上游.body) {
+            const 读端 = 上游.body.getReader();
+            for (;;) {
+              const { done, value } = await 读端.read();
+              if (done) break;
+              响应.write(Buffer.from(value));
+            }
+          }
+          响应.end();
+        } catch {
+          try {
+            响应.statusCode = 502;
+            响应.end();
+          } catch {
+            // 响应已结束，忽略。
+          }
+        }
       })();
       return;
     }
