@@ -11,6 +11,7 @@
 
 import { LoRA槽位数 } from '@/models/genSystem';
 import type { 文生图系统设置, 生图渠道 } from '@/models/genSystem';
+import { 未选择模型 } from './comfyEngine';
 import type { Comfy可选资源 } from './comfyClient';
 import { 是ComfyUI界面格式, 是ComfyUI接口格式 } from './types';
 import { 扫描剩余占位符, 占位符表 } from './workflowTokens';
@@ -174,7 +175,7 @@ export function 运行自检(
   }
 
   if (设置.渠道 === 'comfyui') {
-    检查项.push(...检查ComfyUI(设置));
+    检查项.push(...检查ComfyUI(设置, 可选资源));
     // 有服务端资源列表时，顺手把工作流里写死的模型/LoRA/VAE 名核对一遍。
     const 档案 = 设置.comfyui.档案列表[设置.comfyui.当前档案];
     if (档案?.工作流Json) 检查项.push(...校验工作流资源(档案.工作流Json, 可选资源));
@@ -199,7 +200,78 @@ function 检查参考图缺失(设置: 文生图系统设置, 渠道名: string)
   }];
 }
 
-function 检查ComfyUI(设置: 文生图系统设置): 检查项[] {
+/** 采样器节点的 class_type（不同安装/版本会不一样，按前缀放宽匹配）。 */
+const 采样器类型 = /^(KSampler|KSamplerAdvanced|SamplerCustom)/;
+
+/**
+ * 顺着采样器的 positive / negative 输入，找出实际提供条件的节点 id。
+ *
+ * 用途：缺提示词占位符时直接点名「改 #6 的 text」，而不是让用户自己在几十个节点里翻。
+ * 只做一跳（采样器 → 条件节点），这是绝大多数工作流的形状；跳不到就返回空数组。
+ */
+export function 找提示词节点(工作流对象: unknown): { 正向: string[]; 负向: string[] } {
+  const 正向 = new Set<string>();
+  const 负向 = new Set<string>();
+  if (!工作流对象 || typeof 工作流对象 !== 'object' || Array.isArray(工作流对象)) {
+    return { 正向: [], 负向: [] };
+  }
+  const 全部 = 工作流对象 as Record<string, { class_type?: unknown; inputs?: Record<string, unknown> }>;
+  const 取引用 = (值: unknown): string | null => {
+    if (typeof 值 === 'string' && 值.trim()) return 值.trim();
+    if (Array.isArray(值) && typeof 值[0] === 'string' && 值[0].trim()) return 值[0].trim();
+    return null;
+  };
+  for (const [节点Id, 节点] of Object.entries(全部)) {
+    const 类型 = typeof 节点?.class_type === 'string' ? 节点.class_type : '';
+    if (!采样器类型.test(类型)) continue;
+    const 正 = 取引用(节点.inputs?.positive);
+    const 负 = 取引用(节点.inputs?.negative);
+    if (正 && 全部[正]) 正向.add(正);
+    if (负 && 全部[负]) 负向.add(负);
+    void 节点Id;
+  }
+  return { 正向: [...正向], 负向: [...负向] };
+}
+
+/**
+ * 设置里的模型 / VAE / CLIP 是否真的在服务端。
+ *
+ * 这条路走的是 `%MODEL_NAME%` 这类占位符 —— `校验工作流资源` 只看**写死在 JSON 里**的值，
+ * 占位符会被跳过，于是「设置里选了个服务器上没有的模型」就成了盲区：
+ * 提交后才报 `Value not in list`，而那道报错只说节点号与类型。这里补上。
+ */
+function 检查设置资源(
+  设置: 文生图系统设置,
+  资源: Comfy可选资源 | null | undefined,
+): 检查项[] {
+  if (!资源) return [];
+  const comfy = 设置.comfyui;
+  const 档案 = comfy.档案列表[comfy.当前档案];
+  if (!档案) return [];
+  const 映射: Array<[string, string[], string]> = [
+    ['checkpoint 模型', 资源.模型 ?? [], 档案.参数.模型],
+    ['VAE', 资源.vae ?? [], 档案.参数.vae],
+    ['CLIP', 资源.clip ?? [], 档案.参数.clip],
+  ];
+  const 项: 检查项[] = [];
+  for (const [说明, 可用, 值] of 映射) {
+    const 裁剪 = (值 ?? '').trim();
+    // 空值 / 哨兵值由别的检查负责，这里只管「选了但服务器没有」。
+    if (!裁剪 || 裁剪 === 未选择模型 || 可用.length === 0) continue;
+    if (可用.includes(裁剪)) continue;
+    项.push({
+      级别: 'error',
+      标题: `设置里的${说明}在 ComfyUI 上不存在：${裁剪}`,
+      说明: `工作流用的是占位符（%MODEL_NAME% 这类），值来自「生成参数」，`
+        + `但服务端列表里没有它。ComfyUI 会以「Value not in list」拒绝提交。`
+        + `可用的${说明}：${可用.slice(0, 5).join('、')}${可用.length > 5 ? ` 等 ${可用.length} 个` : ''}。`
+        + '请在「生成参数」里重新选择。',
+    });
+  }
+  return 项;
+}
+
+function 检查ComfyUI(设置: 文生图系统设置, 资源?: Comfy可选资源 | null): 检查项[] {
   const 项: 检查项[] = [];
   const comfy = 设置.comfyui;
 
@@ -277,16 +349,26 @@ function 检查ComfyUI(设置: 文生图系统设置): 检查项[] {
     });
   }
 
-  const 必需的: Array<[string, boolean]> = [
-    ['正向提示词', 工作流.includes('%prompt%') || 工作流.includes('%comfyuizhengxiangtishici%')],
-    ['负向提示词', 工作流.includes('%negative%') || 工作流.includes('%comfyuifuxiangtishici%')],
+  // 提示词占位符：顺手把「该改哪个节点」指出来 —— 只说「没有占位符」时，
+  // 用户得自己在几十个节点里翻，实测就卡在这一步。
+  const 文本节点 = 可解析 ? 找提示词节点(解析结果) : { 正向: [], 负向: [] };
+  const 必需的: Array<[string, boolean, string[], string, string]> = [
+    ['正向提示词', 工作流.includes('%prompt%') || 工作流.includes('%comfyuizhengxiangtishici%'), 文本节点.正向, '%prompt%', '正向'],
+    ['负向提示词', 工作流.includes('%negative%') || 工作流.includes('%comfyuifuxiangtishici%'), 文本节点.负向, '%negative_prompt%', '负向'],
   ];
-  for (const [名称, 存在] of 必需的) {
+  for (const [名称, 存在, 节点列表, 占位符, 方向] of 必需的) {
     if (!存在) {
       项.push({
         级别: 'warning',
         标题: `工作流里可能没有${名称}占位符`,
-        说明: `没有占位符时提示词不会进入工作流，出图会被工作流里的固定文本决定。`,
+        说明: 节点列表.length > 0
+          ? `没有占位符时提示词不会进入工作流，出图会被工作流里的固定文本决定。`
+            + `本次看起来是节点 ${节点列表.map((id) => `#${id}`).join('、')} 在提供${方向}条件，`
+            + `请把它的 text 改成 "${占位符}"（必须带双引号，否则永远不会被替换）。`
+          : `没有占位符时提示词不会进入工作流，出图会被工作流里的固定文本决定。`
+            + `请在某处接一个 CLIPTextEncode 并把 text 写成 "${占位符}"（${
+              '必须带双引号'
+            }）。`,
       });
     }
   }
@@ -302,7 +384,8 @@ function 检查ComfyUI(设置: 文生图系统设置): 检查项[] {
     }
   }
 
-  项.push(...检查角色LoRA槽位(设置, 工作流));
+  项.push(...检查角色LoRA槽位(设置, 工作流, 资源));
+  项.push(...检查设置资源(设置, 资源));
 
   return 项;
 }
@@ -314,7 +397,11 @@ function 检查ComfyUI(设置: 文生图系统设置): 检查项[] {
  *   ① 角色绑了 LoRA，但工作流里没有任何 `%lora_name_1%` —— 那 LoRA 永远不会被加载；
  *   ② 角色绑的数量超过槽位数 —— 多出来的会被丢弃（写清楚是哪几个）。
  */
-function 检查角色LoRA槽位(设置: 文生图系统设置, 工作流: string): 检查项[] {
+function 检查角色LoRA槽位(
+  设置: 文生图系统设置,
+  工作流: string,
+  资源?: Comfy可选资源 | null,
+): 检查项[] {
   const 项: 检查项[] = [];
   const 启用角色 = 设置.角色启用列表
     .map((id) => 设置.角色卡[id])
@@ -345,6 +432,26 @@ function 检查角色LoRA槽位(设置: 文生图系统设置, 工作流: string
       说明: `超出的会被丢弃（按出场顺序取前 ${LoRA槽位数} 个）。要么精简绑定，要么在工作流里再加 LoraLoader 槽位`
         + '（占位符只有 1~4，加更多槽需要改代码）。',
     });
+  }
+
+  /*
+   * 名字核对：角色 LoRA 走的是占位符，`校验工作流资源` 看不见它 ——
+   * 名字打错/换了机器时，只有提交后才报 `Value not in list`（且只报节点号）。
+   */
+  const 可用LoRA = 资源?.lora ?? [];
+  if (可用LoRA.length > 0) {
+    const 缺失 = [...new Map(超出
+      .filter((条) => !可用LoRA.includes(条.名称))
+      .map((条) => [`${条.角色}|${条.名称}`, 条])).values()];
+    if (缺失.length > 0) {
+      项.push({
+        级别: 'error',
+        标题: `角色绑定的 LoRA 在 ComfyUI 上不存在：${缺失.map((条) => 条.名称).join('、')}`,
+        说明: 缺失.map((条) => `「${条.角色}」的 ${条.名称}`).join('；')
+          + '。绑定这些 LoRA 的角色出场时，ComfyUI 会以「Value not in list」拒绝本次提交。'
+          + `可用的 LoRA：${可用LoRA.slice(0, 5).join('、')}${可用LoRA.length > 5 ? ` 等 ${可用LoRA.length} 个` : ''}。`,
+      });
+    }
   }
   return 项;
 }

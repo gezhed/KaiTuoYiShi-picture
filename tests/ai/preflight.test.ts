@@ -409,6 +409,78 @@ function 建带LoRA的角色(名称: string) {
     expect(标题2.some((甲) => 甲.includes('没有 LoRA 槽位占位符'))).toBe(false);
   });
 
+  it('设置里的模型不在服务器列表时报错（占位符路径的盲区）', () => {
+    const 设置 = 创建默认文生图系统设置();
+    设置.启用 = true;
+    设置.渠道 = 'comfyui';
+    const 档案 = 设置.comfyui.档案列表[设置.comfyui.当前档案];
+    档案.连接.地址 = 'http://127.0.0.1:8188';
+    档案.参数.模型 = '服务器上没有的模型.safetensors';
+    // 工作流本身用的就是占位符（写死的值才走 校验工作流资源）。
+    档案.工作流Json = JSON.stringify({
+      4: { class_type: 'CheckpointLoaderSimple', inputs: { ckpt_name: '%MODEL_NAME%' } },
+      6: { class_type: 'CLIPTextEncode', inputs: { text: '%prompt%' } },
+      7: { class_type: 'CLIPTextEncode', inputs: { text: '%negative_prompt%' } },
+      3: { class_type: 'KSampler', inputs: { positive: ['6', 0], negative: ['7', 0] } },
+    });
+
+    const 标题 = 标题列表(运行自检(设置, 资源));
+    expect(标题.some((甲) => 甲.includes('设置里的checkpoint 模型在 ComfyUI 上不存在'))).toBe(true);
+
+    // 换成列表里的模型就不报。
+    档案.参数.模型 = 'sd_xl_base_1.0.safetensors';
+    const 标题2 = 标题列表(运行自检(设置, 资源));
+    expect(标题2.some((甲) => 甲.includes('在 ComfyUI 上不存在'))).toBe(false);
+  });
+
+  it('角色绑的 LoRA 不在服务器列表时报错，并点名是哪个角色的哪个名字', () => {
+    const 设置 = 创建默认文生图系统设置();
+    设置.启用 = true;
+    设置.渠道 = 'comfyui';
+    const 角色 = 建带LoRA的角色('不存在.safetensors');
+    设置.角色卡 = { [角色.id]: 角色 };
+    设置.角色启用列表 = [角色.id];
+    const 档案 = 设置.comfyui.档案列表[设置.comfyui.当前档案];
+    档案.连接.地址 = 'http://127.0.0.1:8188';
+    档案.工作流Json = JSON.stringify({
+      4: { class_type: 'CheckpointLoaderSimple', inputs: { ckpt_name: '%MODEL_NAME%' } },
+      20: { class_type: 'LoraLoader', inputs: { lora_name: '%lora_name_1%', strength_model: '%lora_weight_1%' } },
+      6: { class_type: 'CLIPTextEncode', inputs: { text: '%prompt%' } },
+      7: { class_type: 'CLIPTextEncode', inputs: { text: '%negative_prompt%' } },
+      3: { class_type: 'KSampler', inputs: { positive: ['6', 0], negative: ['7', 0] } },
+    });
+
+    const 检查 = 运行自检(设置, 资源);
+    const 命中 = 检查.检查项.find((项) => 项.标题.includes('角色绑定的 LoRA 在 ComfyUI 上不存在'));
+    expect(命中).toBeTruthy();
+    expect(命中?.说明).toContain('流萤');
+    expect(命中?.说明).toContain('不存在.safetensors');
+    expect(命中?.级别).toBe('error');
+  });
+
+  it('缺提示词占位符时点名该改哪个节点', () => {
+    const 设置 = 创建默认文生图系统设置();
+    设置.启用 = true;
+    设置.渠道 = 'comfyui';
+    const 档案 = 设置.comfyui.档案列表[设置.comfyui.当前档案];
+    档案.连接.地址 = 'http://127.0.0.1:8188';
+    档案.参数.模型 = '模型A.safetensors';
+    档案.工作流Json = JSON.stringify({
+      4: { class_type: 'CheckpointLoaderSimple', inputs: { ckpt_name: '%MODEL_NAME%' } },
+      6: { class_type: 'CLIPTextEncode', inputs: { text: 'masterpiece, 1girl' } },
+      7: { class_type: 'CLIPTextEncode', inputs: { text: 'lowres' } },
+      3: { class_type: 'KSampler', inputs: { positive: ['6', 0], negative: ['7', 0] } },
+    });
+
+    const 检查 = 运行自检(设置, 资源);
+    const 正向 = 检查.检查项.find((项) => 项.标题.includes('正向提示词'));
+    const 负向 = 检查.检查项.find((项) => 项.标题.includes('负向提示词'));
+    expect(正向?.说明).toContain('#6');
+    expect(正向?.说明).toContain('%prompt%');
+    expect(负向?.说明).toContain('#7');
+    expect(负向?.说明).toContain('%negative_prompt%');
+  });
+
   it('LoRA / VAE / CLIP 同样会被核对', () => {
     const 设置 = 创建默认文生图系统设置();
     设置.启用 = true;
