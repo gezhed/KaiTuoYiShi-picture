@@ -22,6 +22,7 @@ interface LiveSyncBridgeProps {
 export function LiveSyncBridge({ on同步, on远程输入 }: LiveSyncBridgeProps): ReactElement | null {
   const on同步Ref = useRef(on同步);
   const on远程输入Ref = useRef(on远程输入);
+  const 上次同步 = useRef(0);
 
   useEffect(() => {
     on同步Ref.current = on同步;
@@ -52,6 +53,10 @@ export function LiveSyncBridge({ on同步, on远程输入 }: LiveSyncBridgeProps
       if (事件.kind === 'turn-done' || 事件.kind === 'turn-idle') {
         if (回放) return;
         setStreamingMessage('');
+        // 冷却：无论什么原因，同步至少间隔 4 秒一次，杜绝风暴。
+        const 现在 = Date.now();
+        if (现在 - 上次同步.current < 4000) return;
+        上次同步.current = 现在;
         on同步Ref.current?.();
       }
     });

@@ -52,6 +52,7 @@ import { 重新解析变量计划 } from '@/services/variableRepair';
 import { snapshotVariableState } from '@/utils/variableExecutor';
 import { variableStateFingerprint } from '@/utils/variableFingerprint';
 import { findPreviousUserInput } from '@/utils/chatHistory';
+import { 发送远程输入, 是主机端 } from '@/services/localSave/liveSync';
 import type { 变量修复计划, 变量修复回执 } from '@/models/variableRepair';
 import { buildPhoneApiConfig, generatePhoneReply } from '@/services/ai/phoneService';
 import { generateSkillDraft } from '@/services/ai/skillGenerator';
@@ -199,6 +200,12 @@ export function useGame(): UseGameReturn {
 
   const handleSend = useCallback(
     async (text: string) => {
+      // 非主机（手机遥控端）：任何发送（包括开局派发、动作选项等内部路径）都不本地生成，
+      // 一律转给主机去跑——从源头断开“双份生成”。
+      if (!是主机端()) {
+        await 发送远程输入(text);
+        return;
+      }
       const s = stateRef.current;
       // 不先放弃旧恢复现场的话，未落地回合的用户消息会与新回合叠加。
       if (s.activeWorkflow.recovery || s.turnPhase) {
