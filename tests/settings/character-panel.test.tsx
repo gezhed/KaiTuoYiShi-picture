@@ -331,7 +331,56 @@ describe('角色管理面板', () => {
     expect(新衣?.上半身).toBe('deep blue gown（深蓝礼服）');
     // 回执写清写了几个字段、几件服装。
     expect(await screen.findByText(/已写入 2 个部位字段、1 件服装/)).toBeInTheDocument();
-    expect(screen.getByText(/另有 1 件未勾选/)).toBeInTheDocument();
+    expect(screen.getByText(/另有 1 件没有勾选，未写入/)).toBeInTheDocument();
+  });
+
+  it('开关关着时回执必须明说「服装没有写入」（以前只字不提）', async () => {
+    const 捕获: { 系统?: 文生图系统设置 } = {};
+    const 请求生成 = vi.fn(async (): Promise<生成角色特征结果> => ({
+      字段: { characterTraits: 'pink hair（粉色头发）' },
+      服装: [{ name: '皇家礼服', 英文名称: '', 归属人: '', 上半身: 'regal gown', 上半身背面: '', 下半身: '', 下半身背面: '', 全身: '', 负面: '' }],
+      未识别: [],
+      原始回复: '<人物>…</人物>',
+      重试次数: 0,
+    }));
+    render(<TestShell 初始={建系统()} 请求生成={请求生成} on系统={(系统) => { 捕获.系统 = 系统; }} />);
+    fireEvent.click(screen.getByRole('button', { name: /生成/ }));
+    fireEvent.change(await screen.findByPlaceholderText(/流萤，星核猎手少女/), { target: { value: '流萤' } });
+    fireEvent.click(screen.getByText('一键生成'));
+    await screen.findByDisplayValue('pink hair（粉色头发）');
+
+    // 关掉「同时写入生成的服装」（开关的无障碍名称就是它的标题）。
+    fireEvent.click(screen.getByRole('button', { name: '同时写入生成的服装' }));
+    fireEvent.click(screen.getByText('写入角色卡'));
+    await waitFor(() => {
+      expect(screen.getByText(/服装没有写入/)).toBeInTheDocument();
+    });
+    expect(捕获.系统?.角色卡.char_1.outfits).toHaveLength(0);
+  });
+
+  it('模型只给了 <服装> 没给部位字段时，生成结果面板也出现并能写入服装', async () => {
+    const 捕获: { 系统?: 文生图系统设置 } = {};
+    const 请求生成 = vi.fn(async (): Promise<生成角色特征结果> => ({
+      字段: {},
+      服装: [{ name: '皇家礼服', 英文名称: '', 归属人: '', 上半身: 'regal gown', 上半身背面: '', 下半身: '', 下半身背面: '', 全身: '', 负面: '' }],
+      未识别: [],
+      原始回复: '<服装>…</服装>',
+      重试次数: 0,
+    }));
+    render(<TestShell 初始={建系统()} 请求生成={请求生成} on系统={(系统) => { 捕获.系统 = 系统; }} />);
+    fireEvent.click(screen.getByRole('button', { name: /生成/ }));
+    fireEvent.change(await screen.findByPlaceholderText(/流萤，星核猎手少女/), { target: { value: '流萤' } });
+    fireEvent.click(screen.getByText('一键生成'));
+
+    // 没有部位字段时以前整块面板都不渲染 → 服装根本没机会写。
+    await waitFor(() => {
+      expect(screen.getByText('写入角色卡')).toBeInTheDocument();
+    });
+    fireEvent.click(screen.getByText('写入角色卡'));
+    await waitFor(() => {
+      expect(捕获.系统?.角色卡.char_1.outfits).toHaveLength(1);
+    });
+    expect(捕获.系统?.角色卡.char_1.outfits[0].name).toBe('皇家礼服');
   });
 
   it('生成页签的预设默认空白，并提示去导入', async () => {

@@ -420,7 +420,10 @@ export function CharacterSettingsEditor({
         ) : null}
       </面板>
 
-      <面板 title="服装" desc="`$服装名-upperbody$` 只给上衣、`-lowerbody$` 只给下装、`-upperbody-lowerbody$` 整套；不带 angle 的 JSON 形式也走服装。">
+      <面板
+        title={`服装（${(角色.outfits ?? []).length} 件）`}
+        desc="`$服装名-upperbody$` 只给上衣、`-lowerbody$` 只给下装、`-upperbody-lowerbody$` 整套；不带 angle 的 JSON 形式也走服装。"
+      >
         <div className="flex flex-wrap gap-2">
           <次级按钮
             onClick={() => {
