@@ -16,40 +16,16 @@ import { SAVES_STORE, SAVE_SUMMARIES_STORE, SAVE_NODE_DELTAS_STORE } from './dbC
 import { toError } from '@/utils/storageUtils';
 
 export async function loadRawSave(db: IDBDatabase, id: number): Promise<存档数据 | null> {
-  const 本地 = await new Promise<存档数据 | null>((resolve, reject) => {
+  return new Promise((resolve, reject) => {
     const tx = db.transaction(SAVES_STORE, 'readonly');
-    const request = tx.objectStore(SAVES_STORE).get(id);
+    const store = tx.objectStore(SAVES_STORE);
+    const request = store.get(id);
     request.onsuccess = () => {
       const result = request.result as 存档数据 | undefined;
       resolve(result ?? null);
     };
     request.onerror = () => reject(toError(request.error));
   });
-  if (本地) return 本地;
-  // 按需恢复：旧存档未预载 → 从本地服务取一次，并缓存进 IDB（下次就快了）。
-  const 取回 = await 从服务取存档行(id);
-  if (!取回) return null;
-  await new Promise<void>((resolve) => {
-    const tx = db.transaction(SAVES_STORE, 'readwrite');
-    tx.objectStore(SAVES_STORE).put(取回);
-    tx.oncomplete = () => resolve();
-    tx.onerror = () => resolve();
-    tx.onabort = () => resolve();
-  });
-  return 取回 as unknown as 存档数据;
-}
-
-/** 从本地服务按键取一行存档；服务不可用返回 null。 */
-async function 从服务取存档行(id: number): Promise<Record<string, unknown> | null> {
-  try {
-    const 响应 = await fetch(`/api/saves/store/saves?key=${encodeURIComponent(String(id))}`);
-    if (!响应.ok) return null;
-    const 数据 = await 响应.json() as { rows?: unknown[] };
-    const 首 = 数据.rows?.[0];
-    return 首 && typeof 首 === 'object' ? 首 as Record<string, unknown> : null;
-  } catch {
-    return null;
-  }
 }
 
 export async function restoreDeltaSaveIfNeeded(db: IDBDatabase, save: 存档数据, visited = new Set<number>()): Promise<存档数据> {
