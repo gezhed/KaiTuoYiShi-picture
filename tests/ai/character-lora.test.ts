@@ -106,9 +106,11 @@ describe('未用槽自动跳过', () => {
 
     const 处理后 = 处理跳过节点(工作流);
     expect(处理后['3']).toBeUndefined();
-    // 下游（KSampler 的 model、CLIPTextEncode 的 clip）应接到第 2 槽那个节点（即 id 2）。
-    expect((处理后['4'].inputs?.model as unknown[])[0]).toBe('2');
-    expect((处理后['5'].inputs?.clip as unknown[])[0]).toBe('2');
+    // 下游应接到存活的那个 LoRA 节点（id 2），且**槽位要对**：
+    // model → 0（MODEL），clip → 1（CLIP）。两路都接 0 会被 ComfyUI 判类型不符。
+    expect(处理后['4'].inputs?.model).toEqual(['2', 0]);
+    expect(处理后['5'].inputs?.clip).toEqual(['2', 1]);
+    expect(处理后['6'].inputs?.clip).toEqual(['2', 1]);
   });
 
   it('两个槽都有值时不动结构', () => {
@@ -123,7 +125,8 @@ describe('未用槽自动跳过', () => {
     const 处理后 = 处理跳过节点(工作流);
     expect(处理后['2']).toBeUndefined();
     expect(处理后['3']).toBeUndefined();
-    expect((处理后['4'].inputs?.model as unknown[])[0]).toBe('1');
+    expect(处理后['4'].inputs?.model).toEqual(['1', 0]);
+    expect(处理后['5'].inputs?.clip).toEqual(['1', 1]);
   });
 
   it('没绑 LoRA 占位符的节点不受影响', () => {

@@ -139,25 +139,6 @@ export function 处理跳过节点(
     清理后[id] = { ...其余 };
   }
 
-  /** 沿跳过链向上找到第一个存活节点；返回 `[节点id, 输出槽]`。 */
-  const 追溯 = (节点Id: string, 槽位: unknown): [string, number] | null => {
-    let 当前: string | undefined = 节点Id;
-    let 当前槽 = typeof 槽位 === 'number' ? 槽位 : 0;
-    const 已访问 = new Set<string>();
-    while (当前 && 跳过集合.has(当前)) {
-      if (已访问.has(当前)) return null;
-      已访问.add(当前);
-      const 节点 = 工作流[当前];
-      const 输入 = 节点?.inputs ?? {};
-      const 候选 = Object.entries(输入).find(([, 值]) => Array.isArray(值) && typeof 值[0] === 'string');
-      if (!候选) return null;
-      const [上游Id, 上游槽] = 候选[1] as [string, unknown];
-      当前 = 上游Id;
-      当前槽 = typeof 上游槽 === 'number' ? 上游槽 : 0;
-    }
-    return 当前 ? [当前, 当前槽] : null;
-  };
-
   const 节点输入类型 = (节点Id: string, 输入名: string): string[] => {
     const 类名 = 工作流[节点Id]?.class_type;
     if (!类名) return [];
@@ -172,29 +153,59 @@ export function 处理跳过节点(
     return [];
   };
 
+  /**
+   * 沿跳过链向上找到第一个存活节点；返回 `[节点id, 输出槽]`。
+   *
+   * 关键是**走哪一路**：被跳过节点的输入可能有多个（`LoraLoader` 就是
+   * `model` 与 `clip` 两路）。早先这里取「第一个数组型输入」，于是下游的
+   * `clip` 会被接到上游的 `model` 输出上，ComfyUI 报
+   * `Return type mismatch between linked nodes`（实测踩到）。
+   * 现在按优先级选：声明类型匹配（有 objectInfo 时）→ 同名输入 → 同一输出槽 → 第一个。
+   */
+  const 追溯 = (
+    节点Id: string,
+    槽位: unknown,
+    输入名: string,
+    期望类型: string[],
+  ): [string, number] | null => {
+    let 当前: string | undefined = 节点Id;
+    let 当前槽 = typeof 槽位 === 'number' ? 槽位 : 0;
+    let 目标输入名 = 输入名;
+    const 已访问 = new Set<string>();
+    while (当前 && 跳过集合.has(当前)) {
+      if (已访问.has(当前)) return null;
+      已访问.add(当前);
+      const 输入 = 工作流[当前]?.inputs ?? {};
+      const 链接项 = Object.entries(输入).filter(([, 值]) => Array.isArray(值) && typeof 值[0] === 'string');
+      if (链接项.length === 0) return null;
+
+      const 类型匹配 = 期望类型.length > 0
+        ? 链接项.filter(([名]) => 节点输入类型(当前 as string, 名).some((项) => 期望类型.includes(项)))
+        : [];
+      const 候选 = 类型匹配[0]
+        ?? 链接项.find(([名]) => 名 === 目标输入名)
+        ?? 链接项.find(([, 值]) => (值 as unknown[])[1] === 当前槽)
+        ?? 链接项[0];
+
+      const [上游Id, 上游槽] = 候选[1] as [string, unknown];
+      目标输入名 = 候选[0];
+      当前 = 上游Id;
+      当前槽 = typeof 上游槽 === 'number' ? 上游槽 : 0;
+    }
+    return 当前 ? [当前, 当前槽] : null;
+  };
+
   for (const 节点 of Object.values(清理后)) {
     const 输入 = 节点.inputs;
     if (!输入) continue;
     for (const [输入名, 值] of Object.entries(输入)) {
       if (!Array.isArray(值) || typeof 值[0] !== 'string') continue;
       if (!跳过集合.has(值[0])) continue;
-      const 目标 = 追溯(值[0], 值[1]);
+      const 期望类型 = 节点输入类型(值[0], 输入名);
+      const 目标 = 追溯(值[0], 值[1], 输入名, 期望类型);
       if (!目标) continue;
       const 目标Id = 目标[0];
       const 目标槽 = 目标[1];
-      const 期望类型 = 节点输入类型(目标Id, 输入名);
-      // 被跳过节点把不同类型的两路接在一起时，直连会让下游拿到错误类型；
-      // objectInfo 可用时改接同类型的旁路上游。缺失时按来源的直接接入处理。
-      if (期望类型.length > 0) {
-        const 替代 = Object.keys(清理后).find((候选Id) => {
-          if (候选Id === 目标Id) return false;
-          return 节点输入类型(候选Id, 输入名).some((项) => 期望类型.includes(项));
-        });
-        if (替代) {
-          输入[输入名] = [替代, 目标槽];
-          continue;
-        }
-      }
       输入[输入名] = [目标Id, 目标槽];
     }
   }

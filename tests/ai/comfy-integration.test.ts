@@ -153,10 +153,12 @@ describe('出图链路（假 ComfyUI）', () => {
     expect(已提交['20'].inputs.lora_name).toBe('krea.safetensors');
     expect(已提交['20'].inputs.strength_model).toBe(0.75);
     expect(已提交['20'].inputs.strength_clip).toBe(0.75);
-    // 第 2 槽的节点整条消失，下游接到第 1 槽。
+    // 第 2 槽的节点整条消失，下游接到第 1 槽 —— **槽位也要对**：
+    // 接到 ["20",0]（MODEL）会让 ComfyUI 报 Return type mismatch，必须接 ["20",1]（CLIP）。
     expect(已提交['21']).toBeUndefined();
-    expect((已提交['3'].inputs.model as unknown[])[0]).toBe('20');
-    expect((已提交['6'].inputs.clip as unknown[])[0]).toBe('20');
+    expect(已提交['3'].inputs.model).toEqual(['20', 0]);
+    expect(已提交['6'].inputs.clip).toEqual(['20', 1]);
+    expect(已提交['7'].inputs.clip).toEqual(['20', 1]);
     // 提交体里不该残留任何 LoRA 占位符。
     expect(JSON.stringify(已提交)).not.toContain('%lora_');
   });
@@ -182,8 +184,11 @@ describe('出图链路（假 ComfyUI）', () => {
 
     const 已提交 = 记录.最后提交?.prompt as Record<string, { inputs: Record<string, unknown> }>;
     expect(已提交['20']).toBeUndefined();
-    expect((已提交['3'].inputs.model as unknown[])[0]).toBe('4');
-    expect((已提交['6'].inputs.clip as unknown[])[0]).toBe('4');
+    // 拆掉 LoRA 链后必须回到 CheckpointLoaderSimple 的 MODEL(0) / CLIP(1)，
+    // 而不是两路都接到 0（那正是「Return type mismatch between linked nodes」）。
+    expect(已提交['3'].inputs.model).toEqual(['4', 0]);
+    expect(已提交['6'].inputs.clip).toEqual(['4', 1]);
+    expect(已提交['7'].inputs.clip).toEqual(['4', 1]);
   });
 
   it('提交体里不含任何未替换的占位符', async () => {
