@@ -28,6 +28,7 @@ const 执行 = 参数.includes('--执行') || 参数.includes('--yes') || 参数
 const 指定目录 = 参数.find((值) => !值.startsWith('--'));
 const 存档目录 = path.resolve(指定目录 || path.join(本目录, '..', 'save'));
 const 保留节点数 = 6;
+const 清理其它树 = 参数.includes('--清理其它树');
 
 const 读JSON = (p) => JSON.parse(fs.readFileSync(p, 'utf8'));
 const 写JSON = (p, o) => fs.writeFileSync(p, JSON.stringify(o));
@@ -103,7 +104,7 @@ if (fs.existsSync(summaries目录)) {
   for (const f of fs.readdirSync(summaries目录).filter((f) => f.endsWith('.json'))) {
     const 行 = 读JSON(path.join(summaries目录, f));
     const nodeId = 行.saveTree?.nodeId;
-    if (nodeId) byNodeId.set(nodeId, { id: 行.id, file: `${行.id}.json`, nodeId, parentNodeId: 行.saveTree?.parentNodeId ?? null });
+    if (nodeId) byNodeId.set(nodeId, { id: 行.id, file: `${行.id}.json`, nodeId, parentNodeId: 行.saveTree?.parentNodeId ?? null, rootId: 行.saveTree?.rootId ?? null, type: 行.type });
   }
 }
 
@@ -124,6 +125,22 @@ const 链上保留 = new Set(链.slice(0, 保留节点数).map((项) => 项.id))
 if (根节点) 链上保留.add(根节点.id);
 // 只删「自动链上、被窗口挤出去的旧节点」；不在链上的（手动存档 / 其它分支）一律保留。
 const 丢弃 = 链.slice(保留节点数, 根节点 ? Math.max(保留节点数, 链.length - 1) : 链.length);
+
+// 可选：清理「其它自动树」（同步分叉留下的噪声树）。整棵树全是 auto 才删，含手动/导入的一律保留。
+if (清理其它树) {
+  const 当前根 = 链[0]?.rootId ?? null;
+  const 按根 = new Map();
+  for (const 项 of byNodeId.values()) {
+    if (!项.rootId) continue;
+    const 组 = 按根.get(项.rootId) ?? [];
+    组.push(项);
+    按根.set(项.rootId, 组);
+  }
+  for (const [根, 组] of 按根) {
+    if (根 === 当前根) continue;
+    if (组.every((项) => 项.type === 'auto')) 丢弃.push(...组);
+  }
+}
 
 // ── 报告 ──────────────────────────────────────────────────
 console.log('');

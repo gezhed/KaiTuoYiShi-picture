@@ -2,38 +2,40 @@ import type { ReactElement } from 'react';
 import { useEffect, useRef } from 'react';
 
 import { setStreamingMessage } from '@/utils/streamingMessageStore';
-import { 注册就地同步 } from '@/services/localSave/inPlaceSync';
 import { 订阅实时事件, 读取客户端ID } from '@/services/localSave/liveSync';
 
+export interface 镜像消息 {
+  id: string;
+  role: 'user' | 'assistant';
+  content: string;
+  timestamp: number;
+}
+
 interface LiveSyncBridgeProps {
-  /** 原地载入最新工作区（应用自带的「继续」动作，不重载页面）。 */
-  on同步?: () => void;
-  /** 主机端：收到遥控端转来的用户输入时，像本机打字一样触发发送。 */
+  /**
+   * 遥控端：把主机的这一回合追加到本地聊天——**纯显示**。
+   * 绝不调用「载入存档」：那会在头未封版时 fork 出新存档树，导致存档与内存无限膨胀。
+   */
+  on追加消息?: (消息: 镜像消息) => void;
+  /** 主机端：收到遥控端发来的输入时，像本机打字一样触发发送。 */
   on远程输入?: (text: string) => void;
 }
 
 /**
  * 多端实时同步桥（无界面）：
- * - 遥控端收到主机流式文字 → 写进 streamingMessageStore（聊天列表直接渲染）；
+ * - 遥控端收到主机流式文字 → 写进 streamingMessageStore（聊天列表实时渲染）；
  * - 主机收到遥控端输入 → 触发本地发送；
- * - 收到回合结束 → 原地载入最新工作区（此时变量结算已完成）。
- * 不做任何弹窗/浮层，也不整页重载。
+ * - 回合结束 → 遥控端把这段正文**追加**成一条消息（不载入、不分叉、不写盘）。
  */
-export function LiveSyncBridge({ on同步, on远程输入 }: LiveSyncBridgeProps): ReactElement | null {
-  const on同步Ref = useRef(on同步);
-  const on远程输入Ref = useRef(on远程输入);
-  const 上次同步 = useRef(0);
+export function LiveSyncBridge({ on追加消息, on远程输入 }: LiveSyncBridgeProps): ReactElement | null {
+  const on追加Ref = useRef(on追加消息);
+  const on输入Ref = useRef(on远程输入);
+  const 流文本 = useRef('');
 
   useEffect(() => {
-    on同步Ref.current = on同步;
-    on远程输入Ref.current = on远程输入;
-  }, [on同步, on远程输入]);
-
-  // 把「就地同步」注册到全局，供其它非 React 逻辑调用（避免整页重载）。
-  useEffect(() => {
-    注册就地同步(() => on同步Ref.current?.());
-    return () => { 注册就地同步(null); };
-  }, []);
+    on追加Ref.current = on追加消息;
+    on输入Ref.current = on远程输入;
+  }, [on追加消息, on远程输入]);
 
   useEffect(() => {
     const 我 = 读取客户端ID();
@@ -42,22 +44,27 @@ export function LiveSyncBridge({ on同步, on远程输入 }: LiveSyncBridgeProps
       if (!回放 && 事件.clientId === 我) return;
 
       if (事件.kind === 'stream' && typeof 事件.text === 'string') {
+        流文本.current = 事件.text;
         setStreamingMessage(事件.text);
         return;
       }
       if (事件.kind === 'user-input' && typeof 事件.text === 'string') {
-        // 主机端：遥控端发来的输入 → 像用户自己打字一样触发发送。
-        if (!回放) on远程输入Ref.current?.(事件.text);
+        if (!回放) on输入Ref.current?.(事件.text);
         return;
       }
       if (事件.kind === 'turn-done' || 事件.kind === 'turn-idle') {
         if (回放) return;
         setStreamingMessage('');
-        // 冷却：无论什么原因，同步至少间隔 4 秒一次，杜绝风暴。
-        const 现在 = Date.now();
-        if (现在 - 上次同步.current < 4000) return;
-        上次同步.current = 现在;
-        on同步Ref.current?.();
+        const 文本 = 流文本.current.trim();
+        流文本.current = '';
+        if (文本) {
+          on追加Ref.current?.({
+            id: `remote-ai-${Date.now()}`,
+            role: 'assistant',
+            content: 文本,
+            timestamp: Date.now(),
+          });
+        }
       }
     });
   }, []);

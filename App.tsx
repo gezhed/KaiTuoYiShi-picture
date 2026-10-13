@@ -480,8 +480,12 @@ export function App() {
             void actions.handleSend(text);
             return;
           }
-          // 遥控端（手机，局域网）：不本地生成，把输入转给主机去跑。
+          // 遥控端（手机，局域网）：不本地生成，把输入转给主机；同时本地补一条用户消息（纯显示）。
           void 发送远程输入(text);
+          state.setChatHistory((前) => [
+            ...前,
+            { id: `remote-user-${Date.now()}`, role: 'user', content: text, timestamp: Date.now() },
+          ]);
         }}
         onAbort={actions.handleAbort}
         loading={state.activeWorkflow.loading}
@@ -738,8 +742,13 @@ export function App() {
   return (
     <>
       <LiveSyncBridge
-        on同步={() => { void actions.handleContinue(); }}
         on远程输入={(text) => { void actions.handleSend(text); }}
+        on追加消息={(消息) => {
+          // 遥控端：把主机这一回合追加到本地聊天（纯显示；不载入、不分叉）
+          state.setChatHistory((前) => (
+            前.some((项) => 项.id === 消息.id) ? 前 : [...前, 消息]
+          ));
+        }}
       />
       <GameView
         weatherId={state.世界.当前天气}
