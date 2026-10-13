@@ -3,6 +3,7 @@ import { useState } from 'react';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import { CharacterSettingsPanel } from '@/components/features/Settings/CharacterSettingsPanel';
+import { 处理角色提示词 } from '@/services/ai/imageGen/characterPrompt';
 import { 创建默认文生图系统设置, 人物生成预设消息 } from '@/models/genSystem';
 import { 导出角色AI预设文本 } from '@/services/ai/imageGen/characterAIPreset';
 import type { 角色卡, 文生图系统设置 } from '@/models/genSystem';
@@ -61,12 +62,14 @@ function TestShell({
   on系统,
   LoRA列表,
   on拉取LoRA,
+  生成预览图,
 }: {
   初始: 文生图系统设置;
   请求生成?: (参数: { 系统: 文生图系统设置; 要求: string; 角色?: 角色卡 }) => Promise<生成角色特征结果>;
   on系统?: (系统: 文生图系统设置) => void;
   LoRA列表?: string[];
   on拉取LoRA?: () => Promise<string[]>;
+  生成预览图?: (提示词: string) => Promise<{ 数据地址: string; 宽度: number; 高度: number }>;
 }) {
   const [系统, set系统] = useState(初始);
   return (
@@ -80,6 +83,7 @@ function TestShell({
       请求生成={请求生成}
       LoRA列表={LoRA列表}
       on拉取LoRA={on拉取LoRA}
+      生成预览图={生成预览图}
     />
   );
 }
@@ -381,6 +385,84 @@ describe('角色管理面板', () => {
       expect(捕获.系统?.角色卡.char_1.outfits).toHaveLength(1);
     });
     expect(捕获.系统?.角色卡.char_1.outfits[0].name).toBe('皇家礼服');
+  });
+
+  it('预览出图：按预设拼出与正文一致的 $…$ 提示词，图片留在本页可放大', async () => {
+    const 调用: string[] = [];
+    const 生成预览图 = vi.fn(async (提示词: string) => {
+      调用.push(提示词);
+      return { 数据地址: 'data:image/png;base64,AAAA', 宽度: 832, 高度: 1216 };
+    });
+    // 预览读的是角色卡上的字段：给这张卡填上 sfw 上半身，才能验证「段确实被替换成字段」。
+    const 系统 = 建系统();
+    系统.角色卡.char_1 = { ...系统.角色卡.char_1, characterTraits: '银发', upperBodySFW: '白色上衣' };
+    render(<TestShell 初始={系统} 生成预览图={生成预览图} />);
+    fireEvent.click(await screen.findByRole('button', { name: /流萤/ }));
+    fireEvent.click(screen.getByRole('button', { name: /^生成/ }));
+
+    const sfw正面 = await screen.findByRole('button', { name: 'sfw · 正面 · 上半身' });
+    fireEvent.click(sfw正面);
+    await waitFor(() => { expect(生成预览图).toHaveBeenCalledTimes(1); });
+
+    // 提示词形态：外壳 + sfw 前缀 + 带 angle 的 JSON 段（angle 才让它被当成角色段）。
+    expect(调用[0]).toContain('sfw, 1girl, solo');
+    // 语法是 `${键值对}$`（不是 `${json对象}$`）——写错不会报错，只会整段不替换。
+    expect(调用[0]).toContain('${"name":"流萤","angle":"from front","upperBody":"sfw","lowerBody":"hidden"}$');
+    // 再用真实解析器验证这段确实被当成角色段（而不是原样留在提示词里）。
+    const 解析 = 处理角色提示词(调用[0], { 启用列表: ['char_1'], 全部角色: 系统.角色卡 });
+    expect(解析.未识别段).toEqual([]);
+    expect(解析.提示词).toContain('白色上衣');
+    expect(解析.提示词).not.toContain('${');
+
+    // 出图后出现缩略图（alt 是预设标签）与尺寸说明。
+    const 图 = await screen.findByAltText('sfw · 正面 · 上半身');
+    expect(图).toHaveAttribute('src', 'data:image/png;base64,AAAA');
+    expect(screen.getByText('sfw · 正面 · 上半身（832×1216）')).toBeInTheDocument();
+
+    // 点图放大，出现铺满窗口的那张。
+    fireEvent.click(图);
+    expect(await screen.findByAltText('预览放大')).toBeInTheDocument();
+
+    // nsfw 预设不带 sfw 前缀，且档位走 nsfw 字段。
+    fireEvent.click(screen.getByRole('button', { name: 'nsfw · 正面 · 下半身' }));
+    await waitFor(() => { expect(生成预览图).toHaveBeenCalledTimes(2); });
+    expect(调用[1]).toContain('1girl, solo');
+    expect(调用[1]).not.toContain('sfw, 1girl');
+    expect(调用[1]).toContain('"upperBody":"hidden","lowerBody":"nsfw"');
+  });
+
+  it('预览出图：全部生成是串行的，且失败会报出是哪一张', async () => {
+    const 次数: string[] = [];
+    let 第几次 = 0;
+    const 生成预览图 = vi.fn(async (提示词: string) => {
+      次数.push(提示词);
+      第几次 += 1;
+      if (第几次 === 2) throw new Error('ComfyUI 校验失败');
+      return { 数据地址: 'data:image/png;base64,BBBB', 宽度: 512, 高度: 512 };
+    });
+    render(<TestShell 初始={建系统()} 生成预览图={生成预览图} />);
+    fireEvent.click(await screen.findByRole('button', { name: /流萤/ }));
+    fireEvent.click(screen.getByRole('button', { name: /^生成/ }));
+    fireEvent.click(await screen.findByRole('button', { name: /全部生成/ }));
+    await waitFor(() => { expect(生成预览图).toHaveBeenCalledTimes(6); });
+    const 报错 = await screen.findByText(/出图失败/);
+    expect(报错.textContent).toContain('sfw · 背后 · 上半身');
+    expect(报错.textContent).toContain('ComfyUI 校验失败');
+    // 一张失败不影响其余五张。
+    expect(await screen.findAllByRole('img')).toHaveLength(5);
+  });
+
+  it('预览出图：还没写入角色卡时不能预览（预览读的是卡上已保存的内容）', async () => {
+    render(<TestShell 初始={建系统()} 生成预览图={async () => ({ 数据地址: 'x', 宽度: 1, 高度: 1 })} />);
+    fireEvent.click(await screen.findByRole('button', { name: /流萤/ }));
+    fireEvent.click(screen.getByRole('button', { name: /^生成/ }));
+
+    // 切到「新建」目标 → 预览按钮全部禁用并给出理由。
+    // （下拉的占位值由 新建占位 提供，用它的可见文案定位。）
+    const 下拉 = await screen.findByLabelText('目标角色卡');
+    fireEvent.change(下拉, { target: { value: '__新建__' } });
+    expect(await screen.findByText(/这张卡还没写进角色卡表/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'sfw · 正面 · 上半身' })).toBeDisabled();
   });
 
   it('生成页签的预设默认空白，并提示去导入', async () => {

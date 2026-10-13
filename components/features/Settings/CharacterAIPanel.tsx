@@ -37,6 +37,46 @@ import {
 /** 「新建角色卡」在下拉里的占位值：真实 id 都带前缀，不会撞。 */
 const 新建占位 = '__新建__';
 
+/**
+ * 预览出图的预设。
+ *
+ * 用 JSON 形式（带 `angle` 才被当成角色段）：档位写 `upperBody`/`lowerBody`，
+ * 正面/背面靠 `angle` —— 与正文里 `$…$` 的写法完全一致，所以预览看到的就是
+ * 正文里会用的那套字段。
+ */
+export const 预览预设: Array<{
+  标签: string;
+  说明: string;
+  帧: 'from front' | 'from behind';
+  上: 'sfw' | 'nsfw' | 'hidden';
+  下: 'sfw' | 'nsfw' | 'hidden';
+}> = [
+  { 标签: 'sfw · 正面 · 上半身', 说明: 'sfw 正面穿衣上半身', 帧: 'from front', 上: 'sfw', 下: 'hidden' },
+  { 标签: 'sfw · 背后 · 上半身', 说明: 'sfw 穿衣背面（from behind）', 帧: 'from behind', 上: 'sfw', 下: 'hidden' },
+  { 标签: 'sfw · 正面 · 下半身', 说明: 'sfw 正面下装', 帧: 'from front', 上: 'hidden', 下: 'sfw' },
+  { 标签: 'nsfw · 正面 · 上半身', 说明: 'nsfw 正面上半身', 帧: 'from front', 上: 'nsfw', 下: 'hidden' },
+  { 标签: 'nsfw · 背后 · 上半身', 说明: 'nsfw 背面', 帧: 'from behind', 上: 'nsfw', 下: 'hidden' },
+  { 标签: 'nsfw · 正面 · 下半身', 说明: 'nsfw 正面下半身', 帧: 'from front', 上: 'hidden', 下: 'nsfw' },
+];
+
+/** 把预设拼成一段带 `$…$` 的提示词；`angle` 让应用知道这是角色段。 */
+export function 建预览提示词(角色名: string, 预设: (typeof 预览预设)[number]): string {
+  const 段 = JSON.stringify({
+    name: 角色名,
+    angle: 预设.帧,
+    upperBody: 预设.上,
+    lowerBody: 预设.下,
+  });
+  const 前缀 = 预设.上 === 'nsfw' || 预设.下 === 'nsfw' ? '1girl, solo' : 'sfw, 1girl, solo';
+  /*
+   * 拼成 `${键值对}$` —— 注意**不是** `${json对象}$`：
+   * 应用的 JSON 段语法是 `${` + 键值对 + `}$`（见 characterPrompt 的遍历角色段）。
+   * 这里用字符串拼接而不是模板串：模板串里 `${` 是插值起点，写这个语法极易多一个
+   * `}` 或少一个 `$`，而写错时不会报错，只是整段不替换。
+   */
+  return 'image###' + 前缀 + ', ${' + 段.slice(1, -1) + '}$###';
+}
+
 export function CharacterAIPanel({
   设置,
   onPatch,
@@ -50,6 +90,7 @@ export function CharacterAIPanel({
   主API模型,
   主API地址,
   onFetchModels,
+  生成预览图,
 }: {
   设置: 文生图系统设置;
   onPatch: (部分: Partial<文生图系统设置>) => void;
@@ -74,6 +115,11 @@ export function CharacterAIPanel({
   主API模型?: string;
   主API地址?: string;
   onFetchModels?: (config: ConnectionTestConfig) => Promise<string[]>;
+  /**
+   * 按一段提示词出一张预览图（走上层配置好的生图渠道）。
+   * 没提供时「预览出图」整块不显示 —— 免得给一个点了没反应的按钮。
+   */
+  生成预览图?: (提示词: string) => Promise<{ 数据地址: string; 宽度: number; 高度: number }>;
 }) {
   const [要求, set要求] = useState('');
   const [生成中, set生成中] = useState(false);
@@ -87,6 +133,12 @@ export function CharacterAIPanel({
   /** 目标选成「新建」时不再往已有卡上写，而是先建一张。 */
   const [新建模式, set新建模式] = useState(false);
   const [新卡名称, set新卡名称] = useState('');
+  /** 预览出图：结果按预设标签存，方便对照；只留在内存里，不写图库。 */
+  const [预览图, set预览图] = useState<Array<{ 标签: string; 数据地址: string; 宽度: number; 高度: number }>>([]);
+  const [预览中, set预览中] = useState('');
+  /** 出图错误按预设标签记录：串行出图时，后一张不能把前一张的报错冲掉。 */
+  const [预览错误, set预览错误] = useState<Record<string, string>>({});
+  const [放大图, set放大图] = useState<string | null>(null);
   /**
    * 生成结果的可编辑副本。
    *
@@ -180,6 +232,36 @@ export function CharacterAIPanel({
       set错误(异常 instanceof Error ? 异常.message : String(异常));
     } finally {
       set生成中(false);
+    }
+  };
+
+  /** 出一张预览图。预设的提示词与正文里 `$…$` 的写法一致，所以预览即所见。 */
+  const 出一张 = async (预设: (typeof 预览预设)[number], 角色名: string) => {
+    if (!生成预览图) return;
+    set预览中(预设.标签);
+    try {
+      const 图 = await 生成预览图(建预览提示词(角色名, 预设));
+      set预览图((旧) => [...旧.filter((项) => 项.标签 !== 预设.标签), { 标签: 预设.标签, ...图 }]);
+      set预览错误((旧) => {
+        const 下一 = { ...旧 };
+        delete 下一[预设.标签];
+        return 下一;
+      });
+    } catch (错误) {
+      set预览错误((旧) => ({
+        ...旧,
+        [预设.标签]: `${错误 instanceof Error ? 错误.message : String(错误)}`,
+      }));
+    } finally {
+      set预览中('');
+    }
+  };
+
+  /** 依次出全部预设（串行：并行会把 ComfyUI 队列塞满，出错也难对上号）。 */
+  const 出全部 = async (角色名: string) => {
+    for (const 预设 of 预览预设) {
+      // 每张都重新判断一次，用户中途切走也没关系。
+      await 出一张(预设, 角色名);
     }
   };
 
@@ -558,6 +640,96 @@ export function CharacterAIPanel({
           </div>
         ) : null}
       </面板>
+
+      {生成预览图 ? (
+        <面板
+          title={`预览出图${预览图.length > 0 ? `（${预览图.length} 张）` : ''}`}
+          desc="用刚生成的角色直接出一张图看效果。提示词写法与正文里的 $…$ 完全一致（正面/背面靠 angle，档位靠 upperBody / lowerBody），所以预览看到的就是正文会用的那套字段。图片只留在本页：不写图库、不进缓存。"
+        >
+          {(() => {
+            // 预览靠 `$角色名-…$` 读取**角色卡上已保存**的内容：没卡就没得读。
+            const 名字 = (当前角色?.nameCN || '').split('|')[0].trim();
+            const 可预览 = Boolean(名字) && !新建模式;
+            const 目标说明 = 新建模式
+              ? '这张卡还没写进角色卡表 —— 先点上面的「写入角色卡」，再回来预览。'
+              : !名字
+                ? '还没选目标角色卡。'
+                : `目标角色：${名字}`;
+            return (
+              <>
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-[11px]" style={{ color: 'rgba(var(--tj-text-secondary), 0.8)' }}>
+                    {目标说明}
+                  </span>
+                  {可预览 ? (
+                    <>
+                      <次级按钮 disabled={Boolean(预览中)} onClick={() => void 出全部(名字)}>
+                        {预览中 ? `生成中：${预览中}` : '全部生成（6 张，依次）'}
+                      </次级按钮>
+                      {预览图.length > 0 ? (
+                        <次级按钮 onClick={() => set预览图([])}>清空预览</次级按钮>
+                      ) : null}
+                    </>
+                  ) : null}
+                </div>
+
+                {可预览 && 结果 ? (
+                  <提示条
+                    kind="info"
+                    text="当前有还没写入的生成结果：预览用的是角色卡里**已保存**的内容，想看到新内容请先点「写入角色卡」。"
+                  />
+                ) : null}
+
+                <div className="grid gap-2 sm:grid-cols-3">
+                  {预览预设.map((预设) => (
+                    <次级按钮
+                      key={预设.标签}
+                      disabled={!可预览 || Boolean(预览中)}
+                      onClick={() => void 出一张(预设, 名字)}
+                    >
+                      {预设.标签}
+                    </次级按钮>
+                  ))}
+                </div>
+
+                {Object.entries(预览错误).map(([标签, 消息]) => (
+                  <提示条 key={标签} kind="error" text={`${标签} 出图失败：${消息}`} />
+                ))}
+
+                {预览图.length > 0 ? (
+                  <div className="grid gap-2 sm:grid-cols-3">
+                    {预览图.map((图) => (
+                      <figure key={图.标签} className="space-y-1">
+                        <img
+                          src={图.数据地址}
+                          alt={图.标签}
+                          title="点击放大"
+                          onClick={() => set放大图(图.数据地址)}
+                          className="w-full cursor-zoom-in object-cover"
+                          style={{ border: '1px solid rgba(var(--tj-accent-primary), var(--tj-edge-tint))', maxHeight: 220 }}
+                        />
+                        <figcaption className="text-[10px]" style={{ color: 'rgba(var(--tj-text-secondary), 0.78)' }}>
+                          {图.标签}（{图.宽度}×{图.高度}）
+                        </figcaption>
+                      </figure>
+                    ))}
+                  </div>
+                ) : null}
+              </>
+            );
+          })()}
+        </面板>
+      ) : null}
+
+      {放大图 ? (
+        <div
+          className="fixed inset-0 z-50 flex cursor-zoom-out items-center justify-center p-6"
+          style={{ background: 'rgba(0,0,0,0.72)' }}
+          onClick={() => set放大图(null)}
+        >
+          <img src={放大图} alt="预览放大" className="max-h-full max-w-full" />
+        </div>
+      ) : null}
 
       <面板
         title="角色 AI 设置"
