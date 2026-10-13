@@ -161,8 +161,10 @@ export async function readStoreRows(
       } catch {
         continue;
       }
-      if (行.length > 0 && 字节 + raw.length > 上限字节) break;
-      字节 += raw.length;
+      // 用真实字节数（中文 1 字符≈3 字节，用 .length 会把上限放大三倍）。
+      const 本行字节 = Buffer.byteLength(raw, 'utf8');
+      if (行.length > 0 && 字节 + 本行字节 > 上限字节) break;
+      字节 += 本行字节;
       try {
         行.unshift(JSON.parse(raw));
       } catch {
@@ -191,14 +193,15 @@ export async function readStoreRows(
       continue;
     }
     // 单行可能很大（存档本体可达数 MB）：保证至少带回一行，否则一页永远装不下、回灌永久卡死。
-    if (rows.length > 0 && bytes + raw.length > maxBytes) break;
+    const 本行字节 = Buffer.byteLength(raw, 'utf8');
+    if (rows.length > 0 && bytes + 本行字节 > maxBytes) break;
     try {
       rows.push(JSON.parse(raw));
     } catch {
       consumed += 1;
       continue;
     }
-    bytes += raw.length;
+    bytes += Buffer.byteLength(raw, 'utf8');
     consumed += 1;
   }
   return {
