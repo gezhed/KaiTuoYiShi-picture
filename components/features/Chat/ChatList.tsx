@@ -161,24 +161,17 @@ function buildNeighborMeta(messages: 聊天消息[]): NeighborMeta[] {
 
 export function ChatList({ messages, loading, scrollRef, onEditBody, turnActions, turnActionContext, narrativeImageManualEnabled = false, 插图显示, 逐句推进, npcRecords, traveler, album, showInnerVoice = true, visualTextSettings, devMode = false, onIllustrationRegenerate, onIllustrationRerollPrompts }: ChatListProps) {
   const streamingMessage = useStreamingMessage();
-  const 曾活跃 = useRef(false);
-  // 只有「主机」才广播；遥控端（手机）只是显示，绝不转发——否则它会把桥接写入的流式文字
-  // 当成自己在生成又广播出去，与主机形成回声环路（“开拓进行中”刷屏 / 崩溃）。
+  // 只有「主机」才广播过程状态；遥控端（手机）只是显示，绝不转发。
+  // 结束（turn-done）不在这里发：它由 stage12_save 在回合真正封版后发，
+  // 好让其它端拿到的是变量结算完的完整回合。
   useEffect(() => {
     if (!是主机端()) return;
     if (streamingMessage) {
-      曾活跃.current = true;
       void 发布实时事件({ kind: 'stream', source: 'host', text: streamingMessage });
       return;
     }
     if (loading) {
-      曾活跃.current = true;
       void 发布实时事件({ kind: 'typing', source: 'host' });
-      return;
-    }
-    if (曾活跃.current) {
-      曾活跃.current = false;
-      void 发布实时事件({ kind: 'turn-done', source: 'host' });
     }
   }, [streamingMessage, loading]);
   const bottomRef = useRef<HTMLDivElement>(null);
