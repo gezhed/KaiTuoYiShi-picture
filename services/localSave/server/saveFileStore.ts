@@ -148,16 +148,25 @@ export async function readStoreRows(
   options: { afterKey?: string | null; limit?: number; maxBytes?: number; tail?: number; root?: string } = {},
 ): Promise<StoreRowsPage> {
   const root = options.root ?? resolveSaveRoot();
-  // tail：取排序后最新的 N 行（供“只预载最新几个节点”）。
+  // tail：从最新往回取，条数不超过 N、总字节不超过上限（至少带最新 1 行）。
   if (options.tail !== undefined) {
     const 键列表 = await listStoreKeys(store, root);
-    const 选取 = 键列表.slice(-Math.max(1, options.tail));
+    const 上限字节 = options.maxBytes ?? 48_000_000;
     const 行: unknown[] = [];
-    for (const 键 of 选取) {
+    let 字节 = 0;
+    for (let i = 键列表.length - 1; i >= 0 && 行.length < options.tail; i -= 1) {
+      let raw: string;
       try {
-        行.push(JSON.parse(await fs.readFile(path.join(storeDir(root, store), encodeStoreKey(键)), 'utf8')));
+        raw = await fs.readFile(path.join(storeDir(root, store), encodeStoreKey(键列表[i])), 'utf8');
       } catch {
-        // 单行读坏不影响其它行
+        continue;
+      }
+      if (行.length > 0 && 字节 + raw.length > 上限字节) break;
+      字节 += raw.length;
+      try {
+        行.unshift(JSON.parse(raw));
+      } catch {
+        // 跳过读坏的行
       }
     }
     return { rows: 行, nextAfterKey: null };

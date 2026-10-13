@@ -403,8 +403,8 @@ async function restoreStore(store: LocalSaveStoreName, db: IDBDatabase): Promise
   return restored;
 }
 
-/** 进游戏时预载的存档本体的最大行数（其余按需从磁盘读取）。 */
-const 预载存档数 = 10;
+/** 进游戏时预载的存档本体的最大行数（其余按需从磁盘读取；行数另受服务端字节上限约束）。 */
+const 预载存档数 = 6;
 
 /** 只按「最新 N 行」预载一个 store（其余行运行时按需拉取）。 */
 async function restoreStoreTail(store: LocalSaveStoreName, db: IDBDatabase, n: number): Promise<number> {
