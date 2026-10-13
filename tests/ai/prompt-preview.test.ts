@@ -51,6 +51,41 @@ function 建设置(补丁: (设置: ReturnType<typeof 创建默认文生图系�
   return 设置;
 }
 
+describe('生成提示词预览：服装与未识别段', () => {
+  const 卡 = 建角色({
+    nameCN: '可可利亚',
+    nameEN: 'Cocolia',
+    outfits: [{
+      id: 'o1',
+      name: '皇家礼服',
+      英文名称: 'elegant mature female regal gown',
+      上半身: 'regal gown（华丽长裙）',
+      下半身: '',
+      全身: '',
+      负面: '',
+    }],
+  });
+  const 上下文: 角色匹配上下文 = { 启用列表: [卡.id], 全部角色: { [卡.id]: 卡 } };
+
+  it('用户那条提示词：角色 + 服装都命中，没有未识别段', () => {
+    const 输入 = 'image###sfw,1girl, ${"name":"Cocolia", "angle":"from front", "upperBody":"sfw", "lowerBody":"hidden"}$,'
+      + '${"name":"elegant mature female regal gown", "upperBody":"visible", "lowerBody":"hidden"}$, upper body###';
+    const 预览 = 生成提示词预览(创建默认文生图系统设置(), 输入, 上下文);
+    expect(预览.命中角色).toHaveLength(1);
+    expect(预览.命中服装.map((项) => 项.提示词)).toEqual(['regal gown（华丽长裙）']);
+    expect(预览.未识别段).toEqual([]);
+    expect(预览.正向提示词).toContain('regal gown');
+  });
+
+  it('服装名对不上时进「未识别段」，并说明它被原样保留', () => {
+    const 输入 = 'image###1girl, ${"name":"查无此衣", "upperBody":"visible"}$###';
+    const 预览 = 生成提示词预览(创建默认文生图系统设置(), 输入, 上下文);
+    expect(预览.命中服装).toEqual([]);
+    expect(预览.未识别段).toHaveLength(1);
+    expect(预览.未识别段[0]).toContain('查无此衣');
+  });
+});
+
 describe('生成提示词预览：角色 LoRA', () => {
   it('出场角色绑了 LoRA 时列出来（按出场顺序、上限 4）', () => {
     const 角色 = 建角色({

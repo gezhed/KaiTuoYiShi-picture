@@ -135,6 +135,36 @@ export function PromptPreviewPanel({
         </字段>
       ) : null}
 
+      {预览.未识别段.length > 0 ? (
+        <字段 label={`没识别的段（${预览.未识别段.length}）`} hint="这些段会原样留在提示词里，既不生效又占词元。">
+          <提示条
+            kind="error"
+            text={`下列 $…$ 段没匹配到任何角色或服装，已原样保留：${预览.未识别段.join('、')}。`
+              + '角色按「中文名/英文名（可用 | 分隔别名）」匹配，服装按「中文名称/英文名称」匹配；'
+              + '对不上就改名字，或到角色卡里补一个别名字段。'}
+          />
+        </字段>
+      ) : null}
+
+      {预览.命中服装.length > 0 ? (
+        <字段 label={`命中的服装（${预览.命中服装.length}）`} hint="服装只有「显不显示」两档；写 upperBody/lowerBody = visible 才拼对应字段。">
+          <div className="space-y-1">
+            {预览.命中服装.map((项, 序号) => (
+              <div
+                key={`${项.名称}-${序号}`}
+                className="px-2 py-1 text-[11px] leading-relaxed"
+                style={{ border: '1px solid rgba(var(--tj-accent-primary), var(--tj-edge-tint-weak))' }}
+              >
+                <span className="font-serif">{项.名称}</span>
+                <span className="ml-2 font-mono" style={{ color: 'rgba(var(--tj-text-secondary), 0.85)' }}>
+                  {项.提示词 || '（这件服装的对应字段是空的）'}
+                </span>
+              </div>
+            ))}
+          </div>
+        </字段>
+      ) : null}
+
       {预览.命中角色.length > 0 ? (
         <字段 label={`命中的角色（${预览.命中角色.length}）`}>
           <div className="space-y-1">

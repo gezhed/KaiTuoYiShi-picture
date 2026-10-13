@@ -349,6 +349,46 @@ describe('处理角色提示词', () => {
     expect(出场[0].角色.nameCN).toContain('流萤');
   });
 
+  it('服装按「英文名称」也能匹配（上游 collectOutfitCandidates 两个字段都收）', () => {
+    const 带服装 = 建角色({
+      nameCN: '可可利亚',
+      nameEN: 'Cocolia',
+      outfits: [{
+        id: 'o1',
+        name: '皇家礼服',
+        英文名称: 'elegant mature female regal gown|regal gown',
+        上半身: 'regal gown（华丽长裙）',
+        下半身: 'long skirt（长裙）',
+        全身: '',
+        负面: '',
+      }],
+    });
+    const 上下文2 = 建上下文([带服装]);
+    const 结果 = 处理角色提示词(
+      '1girl, ${\"name\":\"Cocolia\", \"angle\":\"from front\", \"upperBody\":\"sfw\", \"lowerBody\":\"hidden\"}$,'
+      + '${\"name\":\"elegant mature female regal gown\", \"upperBody\":\"visible\", \"lowerBody\":\"hidden\"}$, upper body',
+      上下文2,
+    );
+    expect(结果.命中服装).toHaveLength(1);
+    expect(结果.命中服装[0].提示词).toBe('regal gown（华丽长裙）');
+    expect(结果.提示词).toContain('regal gown（华丽长裙）');
+    expect(结果.未识别段).toEqual([]);
+  });
+
+  it('对不上的段被记进「未识别段」（界面据此点名）', () => {
+    const 带服装 = 建角色({
+      nameCN: '可可利亚',
+      outfits: [{ id: 'o1', name: '皇家礼服', 上半身: 'regal gown', 下半身: '', 全身: '', 负面: '' }],
+    });
+    const 输入 = '1girl, ${"name":"查无此衣", "upperBody":"visible"}$, $查无此人-sfw-upperbody$';
+    const 结果 = 处理角色提示词(输入, 建上下文([带服装]));
+    expect(结果.未识别段).toHaveLength(2);
+    expect(结果.未识别段[0]).toContain('查无此衣');
+    expect(结果.未识别段[1]).toBe('$查无此人-sfw-upperbody$');
+    // 上游语义：原样保留，不吞掉。
+    expect(结果.提示词).toContain('查无此衣');
+  });
+
   it('JSON 形式带 angle 时识别为角色而非服装', () => {
     const 输入 = '$' + JSON.stringify({ name: '流萤', angle: 'from behind', upperBody: 'sfw' }) + '$';
     const 结果 = 处理角色提示词(输入, 上下文);

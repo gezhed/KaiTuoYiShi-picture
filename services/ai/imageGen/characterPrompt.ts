@@ -33,6 +33,20 @@ export interface 角色替换结果 {
   角色负面: string;
 }
 
+/** 整段提示词的替换结果（比单角色的 `角色替换结果` 多出「哪些段生效了」）。 */
+export interface 角色提示词结果 extends 角色替换结果 {
+  /** 命中的服装段（名称 + 实际拼进去的文本）。 */
+  命中服装: Array<{ 名称: string; 提示词: string }>;
+  /**
+   * 没能识别的 `$…$` 段（原文）。
+   *
+   * 上游行为是**原样保留** —— 这样作者能看出自己写错了。代价是：写错时那段
+   * （常见是一整段 JSON）会原封不动发给模型，既不生效又污染提示词。
+   * 所以这里把它回传给界面，让「提示词预览」能直接点名。
+   */
+  未识别段: string[];
+}
+
 export function 归一化名称(名称: string): string {
   return (名称 ?? '')
     .toLowerCase()
@@ -93,6 +107,14 @@ export function 查找最佳角色(输入名: string, 上下文: 角色匹配上
   return 打分(Object.keys(上下文.全部角色));
 }
 
+/** 服装名候选：上游 `collectOutfitCandidates` 同时看 `nameEN` 与 `nameCN`，两者都按 `|` 切别名。 */
+export function 取服装名候选(服装: 服装条目): string[] {
+  return [服装.英文名称, 服装.name]
+    .flatMap((字段) => (字段 ?? '').split('|'))
+    .map((别名) => 别名.trim())
+    .filter(Boolean);
+}
+
 /** 服装同理，两段搜索：角色的服装列表 → 全部角色里的全部服装。 */
 export function 查找最佳服装(输入名: string, 上下文: 角色匹配上下文): 服装条目 | null {
   const 归一输入 = 归一化名称(输入名);
@@ -109,8 +131,17 @@ export function 查找最佳服装(输入名: string, 上下文: 角色匹配上
 
   let 最佳: { 服装: 服装条目; 分数: number } | null = null;
   for (const 服装 of 全部服装) {
-    const 分数 = 计算匹配分(归一输入, 归一化名称(服装.name));
-    if (分数 > 0 && (!最佳 || 分数 > 最佳.分数)) 最佳 = { 服装, 分数 };
+    /*
+     * 中文名与英文名都要比：`$…$` 里写的通常是**英文**（正文模型生成的提示词尤其如此），
+     * 而角色卡上常见的是中文名 + 英文名两个字段。
+     * 这里曾经只比 `服装.name`（即中文名），于是「英文名对得上、中文名对不上」的
+     * 服装整段不替换 —— 用户看到的正是「衣服没穿上」。
+     * 上游 `collectOutfitCandidates` 两个字段都收，这里对齐。
+     */
+    for (const 候选名 of 取服装名候选(服装)) {
+      const 分数 = 计算匹配分(归一输入, 归一化名称(候选名));
+      if (分数 > 0 && (!最佳 || 分数 > 最佳.分数)) 最佳 = { 服装, 分数 };
+    }
   }
   return 最佳?.服装 ?? null;
 }
@@ -391,19 +422,27 @@ export function 清理提示词(文本: string): string {
  *
  * 未识别的段原样保留（`$裸名字$` 不会被吞掉），这样作者能看出自己写错了。
  */
-export function 处理角色提示词(提示词: string, 上下文: 角色匹配上下文): 角色替换结果 {
+export function 处理角色提示词(提示词: string, 上下文: 角色匹配上下文): 角色提示词结果 {
   const 归一 = (提示词 ?? '').replace(/\r?\n/g, ', ');
   const 负面集合: string[] = [];
+  const 命中服装: Array<{ 名称: string; 提示词: string }> = [];
+  const 未识别段: string[] = [];
 
   const 结果 = 遍历角色段(归一, (段, 完整) => {
     const 解析结果 = 解析角色段(段);
-    if (!解析结果) return 完整;
+    if (!解析结果) {
+      未识别段.push(完整);
+      return 完整;
+    }
     const { 解析, 是服装 } = 解析结果;
     const fromBehind = (解析.angle ?? '').toLowerCase().includes('from behind');
 
     if (是服装) {
       const 服装 = 查找最佳服装(解析.名称, 上下文);
-      if (!服装) return 完整;
+      if (!服装) {
+        未识别段.push(完整);
+        return 完整;
+      }
       /*
        * 没写的那一段**不拼**（`hidden`），对齐上游的 `hasUpper`/`hasLower`：
        * 后缀形式的 `-upperbody` 只给上半身、`-lowerbody` 只给下半身，
@@ -417,11 +456,19 @@ export function 处理角色提示词(提示词: string, 上下文: 角色匹配
         fromBehind,
         framing: 解析.framing,
       });
-      return 拼装 || 完整;
+      if (!拼装) {
+        未识别段.push(完整);
+        return 完整;
+      }
+      命中服装.push({ 名称: 服装.name || 服装.英文名称 || 解析.名称, 提示词: 拼装 });
+      return 拼装;
     }
 
     const 角色 = 查找最佳角色(解析.名称, 上下文);
-    if (!角色) return 完整;
+    if (!角色) {
+      未识别段.push(完整);
+      return 完整;
+    }
     const 替换 = 拼装角色替换(角色, {
       upper: 解析.upper ?? 'hidden',
       lower: 解析.lower ?? 'hidden',
@@ -432,7 +479,12 @@ export function 处理角色提示词(提示词: string, 上下文: 角色匹配
     return 替换.提示词 || 完整;
   });
 
-  return { 提示词: 清理提示词(结果), 角色负面: 负面集合.join(', ') };
+  return {
+    提示词: 清理提示词(结果),
+    角色负面: 负面集合.join(', '),
+    命中服装,
+    未识别段,
+  };
 }
 
 /** 普通化触发文本：去掉所有空白并小写。 */
