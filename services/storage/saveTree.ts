@@ -7,11 +7,11 @@ import { devLog, devLogError } from '@/utils/devLog';
 import type { SaveCatalogSnapshot, SaveListItemSummary } from '@/contracts/storage';
 import { buildSaveSummary, isUnsealedHeadSave, type SaveWithTree, type StoredSaveMeta } from './saveSummary';
 import { loadRawSave, restoreDeltaSaveIfNeeded } from './saveRecord';
-import { deleteManagedSaveItems, getSaveCatalogSnapshot, loadSave, loadSaveIdByNodeId, saveGame } from './saveCrud';
+import { deleteManagedSaveItems, findAutoDeltaBase, getSaveCatalogSnapshot, loadSave, loadSaveIdByNodeId, saveGame } from './saveCrud';
 import { createCatalogRecordFromSummary } from '@/services/storage/saveCatalog';
 import { runWithSaveMutationPriority } from '@/services/storage/saveCatalogRepair';
 import { openDB, SAVES_STORE, SAVE_SUMMARIES_STORE, SAVE_NODE_DELTAS_STORE, SAVE_ASSETS_STORE, NEWEST_STORY_STORE } from './dbConnection';
-import { buildSaveNodeDeltaRecord, isDeltaOnlyStoredSave } from '@/utils/saveDeltaStorage';
+import { buildDeltaOnlyStoredSave, buildSaveNodeDeltaRecord, isDeltaOnlyStoredSave } from '@/utils/saveDeltaStorage';
 import { extractSaveAssetRecords, materializeSaveAssetRecords, stripSaveAssetPayloadForStorage } from '@/utils/saveAssetStorage';
 import { omitKeys, toError } from '@/utils/storageUtils';
 
@@ -54,6 +54,9 @@ export async function sealLeafRow(sealedPayload: 存档数据): Promise<void> {
     id: saveId,
     saveRuntime: undefined,
   });
+  // 自动档封版后降级为「仅增量」（每 MAX_DELTA_NODES_PER_CHECKPOINT 个落一个全量检查点）；
+  // 手动档 findAutoDeltaBase 直接返回 null，保持全量、独立、不被自动清理。
+  const deltaBase = await findAutoDeltaBase(db, sealedStored);
   // 事务内二次确认未封版不可省：事务外预检到写入之间存在 TOCTOU 窗口，会覆写已封版检查点。
   await new Promise<void>((resolve, reject) => {
     const tx = db.transaction([SAVES_STORE, SAVE_SUMMARIES_STORE, SAVE_NODE_DELTAS_STORE], 'readwrite');
@@ -74,9 +77,15 @@ export async function sealLeafRow(sealedPayload: 存档数据): Promise<void> {
         resolve();
         return;
       }
-      saveStore.put(sealedStored);
+      saveStore.put(deltaBase ? buildDeltaOnlyStoredSave(sealedStored, deltaBase.baseSaveId) : sealedStored);
       summaryStore.put(createCatalogRecordFromSummary(buildSaveSummary(sealedStored)));
-      const delta = buildSaveNodeDeltaRecord(sealedStored, saveId);
+      const delta = buildSaveNodeDeltaRecord(
+        sealedStored,
+        saveId,
+        deltaBase
+          ? { baseSave: deltaBase.baseSave, baseSaveId: deltaBase.baseSaveId, storageMode: 'delta' }
+          : undefined,
+      );
       if (delta) deltaStore.put(delta);
     };
     readRequest.onerror = () => reject(toError(readRequest.error));
@@ -88,6 +97,92 @@ export async function sealLeafRow(sealedPayload: 存档数据): Promise<void> {
     };
     tx.onerror = () => reject(toError(tx.error));
     tx.onabort = () => reject(tx.error ?? new Error('封版叶子事务已中止。'));
+  });
+  // 自动档滚动窗口：把旧全量已并入的部分清掉，恒保持「1 全量 + ≤5 增量」。
+  if (sealedStored.type === 'auto') {
+    const rootId = (sealedStored as SaveWithTree).saveTree?.rootId;
+    if (rootId) {
+      await compressAutoSaveWindow(rootId).catch((error: unknown) => {
+        devLogError('save', 'auto-window-compress-failed', error);
+      });
+    }
+  }
+}
+
+/** 自动档窗口保留的增量个数。 */
+const AUTO_WINDOW_DELTAS = 5;
+
+/**
+ * 自动档滚动窗口：只保留「最新 1 个全量 + 其后 ≤AUTO_WINDOW_DELTAS 个增量」，更早的自动档整段清除。
+ * 最新档是自足全量，删旧不会伤到它；手动档与其它分支一律不动。
+ * 仅由 sealLeafRow 在「刚落下新全量」时调用。
+ */
+export async function compressAutoSaveWindow(rootId: string): Promise<number> {
+  const trimmed = rootId.trim();
+  if (!trimmed) return 0;
+  const catalog = await getSaveCatalogSnapshot();
+  if (!catalog.catalogComplete) return 0;
+  const byNode = new Map<string, SaveListItemSummary>();
+  for (const item of catalog.items) {
+    const nodeId = item.saveTree?.nodeId;
+    if (nodeId && item.saveTree?.rootId === trimmed && item.type === 'auto') byNode.set(nodeId, item);
+  }
+  const newest = await loadNewestStory();
+  // 从 head 沿 parentNodeId 回溯自动链（链上都是本 root 的自动节点）
+  const chain: SaveListItemSummary[] = [];
+  const seenNodeIds = new Set<string>();
+  let cursor = newest.headNodeId;
+  while (cursor && byNode.has(cursor) && !seenNodeIds.has(cursor)) {
+    seenNodeIds.add(cursor);
+    const item = byNode.get(cursor) as SaveListItemSummary;
+    chain.push(item);
+    cursor = item.saveTree?.parentNodeId ?? null;
+  }
+  if (chain.length <= AUTO_WINDOW_DELTAS + 1) return 0;
+  const drop = chain.slice(AUTO_WINDOW_DELTAS + 1);
+  const keepOldest = chain[AUTO_WINDOW_DELTAS];
+  const nextParentNodeId = drop[drop.length - 1]?.saveTree?.parentNodeId ?? null;
+  const db = await openDB();
+  await deleteManagedSaveItems(db, drop);
+  await reparentSaveNode(db, keepOldest, nextParentNodeId);
+  devLog('save', 'auto-window-compressed', {
+    rootId: trimmed,
+    dropped: drop.length,
+    kept: chain.length - drop.length,
+  });
+  return drop.length;
+}
+
+/** 只改节点的 saveTree.parentNodeId（原样保留其余字段，避免用残缺行重算摘要）。 */
+async function reparentSaveNode(
+  db: IDBDatabase,
+  item: SaveListItemSummary,
+  parentNodeId: string | null,
+): Promise<void> {
+  if (!item.saveTree?.nodeId) return;
+  const patchTree = (tree: 存档树元信息): 存档树元信息 => {
+    const next = { ...tree } as 存档树元信息 & { parentNodeId?: string };
+    if (parentNodeId) next.parentNodeId = parentNodeId;
+    else delete next.parentNodeId;
+    return next;
+  };
+  await new Promise<void>((resolve, reject) => {
+    const tx = db.transaction([SAVES_STORE, SAVE_SUMMARIES_STORE], 'readwrite');
+    const saveStore = tx.objectStore(SAVES_STORE);
+    const summaryStore = tx.objectStore(SAVE_SUMMARIES_STORE);
+    const saveRequest = saveStore.get(item.id);
+    saveRequest.onsuccess = () => {
+      const row = saveRequest.result as (存档数据 & { saveTree?: 存档树元信息 }) | undefined;
+      if (row?.saveTree) saveStore.put({ ...row, saveTree: patchTree(row.saveTree) });
+      const summaryRequest = summaryStore.get(item.id);
+      summaryRequest.onsuccess = () => {
+        const summaryRow = summaryRequest.result as { saveTree?: 存档树元信息 } | undefined;
+        if (summaryRow?.saveTree) summaryStore.put({ ...summaryRow, saveTree: patchTree(summaryRow.saveTree) });
+      };
+    };
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(toError(tx.error));
+    tx.onabort = () => reject(toError(tx.error ?? new Error('自动档窗口重定父节点事务已中止。')));
   });
 }
 

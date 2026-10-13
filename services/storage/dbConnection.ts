@@ -27,7 +27,7 @@ export const SAVE_ASSETS_STORE = 'saveAssets';
 export const SAVE_NODE_DELTAS_STORE = 'saveNodeDeltas';
 export const SETTINGS_STORE = 'settings';
 export const NEWEST_STORY_STORE = 'newestStory';
-export const MAX_DELTA_NODES_PER_CHECKPOINT = 6;
+export const MAX_DELTA_NODES_PER_CHECKPOINT = 5;
 export const SAVE_CATALOG_REPAIR_LEASE_KEY = 'internal.saveCatalogRepairLease.v2';
 export const SAVE_CATALOG_REPAIR_LEASE_MS = 60_000;
 export const SAVE_CATALOG_REPAIR_OWNER = typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'

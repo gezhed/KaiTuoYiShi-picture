@@ -24,7 +24,7 @@ export type SettingsTab =
   | 'api' | 'apiErrors' | 'game' | 'visual' | 'context' | 'nsfw' | 'variables'
   | 'prompts' | 'tavernPresets' | 'extra' | 'theme' | 'storage'
   | 'variableUpdate' | 'memory' | 'yiting' | 'news' | 'zhiku' | 'storyWeaving' | 'phone'
-  | 'variableRepair' | 'imageGen';
+  | 'variableRepair' | 'imageGen' | 'lanPlay';
 
 export interface SettingsModalProps {
   onClose: () => void;

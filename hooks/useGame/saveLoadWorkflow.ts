@@ -35,11 +35,11 @@ import { 归一化变量命令批次列表 } from '@/models/variableCommand';
 import { 归一化剧情编织系统, type 剧情编织系统 } from '@/models/storyWeaving';
 import type { 智库系统 } from '@/models/zhiku';
 import { autoAlignCanonStoryProgress } from '@/services/storyProgressService';
-import { alignStoryWeavingToOpeningArchive, buildPersistedStoryWeavingSystem } from '@/data/storyWeavingPreset';
+import { alignStoryWeavingToOpeningArchive, buildPersistedStoryWeavingSystem, hydratePersistedStoryWeavingSystem, loadAllBundledStoryWeavingPresets } from '@/data/storyWeavingPreset';
 import { materializeAlbumRuntimePayload, pruneAlbumAssetCache } from '@/utils/albumObjectUrl';
 import { compactDuplicatedSaveImages } from '@/utils/saveImageCompactor';
 import { attachSaveTreeMeta, buildNextSaveTreeMeta, getSaveTreeMeta, type 存档树元信息 } from '@/utils/saveTree';
-import { compactChatHistoryForLongSession, compactVariableBatchHistory } from '@/utils/longSessionRetention';
+import { compactChatHistoryForLongSession, compactChatHistoryForSave, compactVariableBatchHistory } from '@/utils/longSessionRetention';
 import { 指向NewestStory记录, type NewestStory记录 } from '@/models/newestStory';
 import { devLog, devLogError } from '@/utils/devLog';
 import { setStreamingMessage } from '@/utils/streamingMessageStore';
@@ -86,7 +86,7 @@ export function buildSavePayload(
   overrides?: Partial<Pick<存档数据, 'turnCount' | 'chatHistory' | '记忆' | '忆庭' | '智库' | '手机' | '世界' | '旅人' | 'NPC' | '相册' | '新闻' | '剧情' | '剧情编织' | 'variableBatches'>>,
   nodeId?: string,
 ): 存档数据 {
-  const persistedChatHistory = compactChatHistoryForLongSession(
+  const persistedChatHistory = compactChatHistoryForSave(
     overrides?.chatHistory ?? state.chatHistory,
   );
   const timestamp = Date.now();
@@ -106,7 +106,8 @@ export function buildSavePayload(
     相册: overrides?.相册 ?? state.相册,
     新闻: overrides?.新闻 ?? state.新闻,
     剧情: overrides?.剧情 ?? state.剧情,
-    剧情编织: 归一化剧情编织系统(overrides?.剧情编织 ?? state.剧情编织),
+    // 存档只带持久化投影（canon 原著正文从内置预设水合），避免完整系统（可达十几 MB）灌进每条存档。
+    剧情编织: buildPersistedStoryWeavingSystem(overrides?.剧情编织 ?? state.剧情编织),
     variableBatches: compactVariableBatchHistory(overrides?.variableBatches ?? state.variableBatches),
     // 重建根叶子须带上队列，否则整树删除后重建会丢 queueTasks。
     queueTasks: state.queueTasks,
@@ -364,7 +365,10 @@ export async function prepareHydration(save: 存档数据): Promise<HydrationCon
   await saveSetting('zhikuSystem', buildPersistedZhikuSystem(zhiku));
 
   const storyWeaving = alignStoryWeavingToOpeningArchive(
-    归一化剧情编织系统(migratedSave.剧情编织),
+    hydratePersistedStoryWeavingSystem(
+      归一化剧情编织系统(migratedSave.剧情编织),
+      await loadAllBundledStoryWeavingPresets().catch(() => 归一化剧情编织系统(undefined)),
+    ),
     safeWorld.开局档案,
   );
   const recentUser = [...safeChatHistory].reverse().find((message) => message.role === 'user');

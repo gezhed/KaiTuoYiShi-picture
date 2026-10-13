@@ -11,6 +11,7 @@ import {
 } from '../saveStoreSchema';
 import {
   applyMutation,
+  countStoreRows,
   hasLocalSaveData,
   readManifest,
   readStoreRows,
@@ -66,7 +67,12 @@ export async function handleSaveApi(request: Request): Promise<Response> {
     }
 
     if (request.method === 'GET' && route === 'stats') {
-      return json({ ok: true, stores: LOCAL_SAVE_STORE_NAMES, hasData: await hasLocalSaveData() });
+      return json({
+        ok: true,
+        stores: LOCAL_SAVE_STORE_NAMES,
+        hasData: await hasLocalSaveData(),
+        counts: await countStoreRows(),
+      });
     }
 
     if (request.method === 'POST' && route === 'mutate') {

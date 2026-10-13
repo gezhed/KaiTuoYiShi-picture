@@ -4,6 +4,7 @@ import { contextSection } from './context';
 import { extraSection } from './extra';
 import { gameSection } from './game';
 import { imageGenSection } from './imageGen';
+import { lanPlaySection } from './lanPlay';
 import { memorySection } from './memory';
 import { newsSection } from './news';
 import { nsfwSection } from './nsfw';
@@ -48,6 +49,7 @@ export const settingsSections: SettingsSectionDefinition[] = [
   storyWeavingSection,
   phoneSection,
   imageGenSection,
+  lanPlaySection,
   variablesSection,
   contextSection,
   storageSection,

@@ -130,6 +130,40 @@ export function compactChatHistoryForLongSession(
   });
 }
 
+/** 把一条消息的 parsedResponse 压到“只留正文/渲染所需”，剥掉全部推理（思维链）与命令草稿。 */
+function 只留正文(parsed: 聊天消息['parsedResponse']): 聊天消息['parsedResponse'] {
+  if (!parsed) return parsed;
+  return {
+    ...parsed,
+    rawText: '',
+    thinking: '',
+    memory: '',
+    commands: {},
+    worldEvents: [],
+    actionOptions: [],
+    variableDraft: '',
+    storyPlan: '',
+  };
+}
+
+/**
+ * 存档专用压缩：比长会话压缩更狠——存档快照不需要调试/计费/推理字段。
+ * 剥离范围是**全部**消息（不再只剥旧消息）：读取旧内容时界面读正文即可，不保留思维链。
+ */
+export function compactChatHistoryForSave(
+  value: readonly 聊天消息[] | null | undefined,
+): 聊天消息[] {
+  return compactChatHistoryForLongSession(value).map((message) => ({
+    ...message,
+    debugContext: undefined,
+    inputTokens: undefined,
+    outputTokens: undefined,
+    tokenUsage: undefined,
+    responseDurationSec: undefined,
+    parsedResponse: 只留正文(message.parsedResponse),
+  }));
+}
+
 function collectDetailedAssistantIndices(messages: readonly 聊天消息[]): Set<number> {
   const indices = new Set<number>();
   let remaining = DETAILED_CHAT_TURNS;

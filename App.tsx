@@ -10,6 +10,7 @@ import {
 } from '@/components/features/GameSystems/album/albumArchiveWorkerClient';
 import type { AlbumImportMode } from '@/components/features/GameSystems/album/albumArchive';
 import { 写入相册设定 } from '@/utils/avatarActions';
+import { LiveSyncBridge } from '@/components/features/Chat/LiveSyncBridge';
 import { devLog, devLogError } from '@/utils/devLog';
 import { LandingPage } from '@/components/features/Home/LandingPage';
 import { HomeTransitionOverlay, MysteryChatModal } from '@/components/features/Home/HomeOverlays';
@@ -728,6 +729,7 @@ export function App() {
 
   return (
     <>
+      <LiveSyncBridge />
       <GameView
         weatherId={state.世界.当前天气}
         topBar={topBar}

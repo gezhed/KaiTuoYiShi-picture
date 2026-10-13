@@ -103,6 +103,15 @@ export async function hasLocalSaveData(root = resolveSaveRoot()): Promise<boolea
   return (await readManifest(root)) !== null;
 }
 
+/** 统计每个 store 已落盘的行数（文件名个数），用于诊断哪一层缺数据。 */
+export async function countStoreRows(root = resolveSaveRoot()): Promise<Record<string, number>> {
+  const result: Record<string, number> = {};
+  for (const store of LOCAL_SAVE_STORE_NAMES) {
+    result[store] = (await listStoreKeys(store, root)).length;
+  }
+  return result;
+}
+
 export async function listStoreKeys(store: LocalSaveStoreName, root = resolveSaveRoot()): Promise<string[]> {
   try {
     const entries = await fs.readdir(storeDir(root, store));
@@ -122,27 +131,42 @@ export interface StoreRowsPage {
 
 export async function readStoreRows(
   store: LocalSaveStoreName,
-  options: { afterKey?: string | null; limit?: number; root?: string } = {},
+  options: { afterKey?: string | null; limit?: number; maxBytes?: number; root?: string } = {},
 ): Promise<StoreRowsPage> {
   const root = options.root ?? resolveSaveRoot();
   const afterKey = options.afterKey ?? null;
   const limit = Math.max(1, options.limit ?? 25);
+  const maxBytes = Math.max(1, options.maxBytes ?? 4_000_000);
   const keys = await listStoreKeys(store, root);
   const candidates = afterKey === null
     ? keys
     : keys.filter((key) => compareStoreKeys(key, afterKey) > 0);
-  const page = candidates.slice(0, limit);
   const rows: unknown[] = [];
-  for (const key of page) {
+  let bytes = 0;
+  let consumed = 0;
+  for (const key of candidates) {
+    if (rows.length >= limit) break;
+    let raw: string;
     try {
-      rows.push(JSON.parse(await fs.readFile(path.join(storeDir(root, store), encodeStoreKey(key)), 'utf8')));
+      raw = await fs.readFile(path.join(storeDir(root, store), encodeStoreKey(key)), 'utf8');
     } catch {
-      // 单行读坏不应让整次回灌失败：跳过该行，其余照常恢复。
+      consumed += 1; // 读坏的行也跳过并前进，避免死循环
+      continue;
     }
+    // 单行可能很大（存档本体可达数 MB）：保证至少带回一行，否则一页永远装不下、回灌永久卡死。
+    if (rows.length > 0 && bytes + raw.length > maxBytes) break;
+    try {
+      rows.push(JSON.parse(raw));
+    } catch {
+      consumed += 1;
+      continue;
+    }
+    bytes += raw.length;
+    consumed += 1;
   }
   return {
     rows,
-    nextAfterKey: candidates.length > limit ? page[page.length - 1] ?? null : null,
+    nextAfterKey: consumed < candidates.length ? candidates[consumed - 1] ?? null : null,
   };
 }
 

@@ -24,9 +24,10 @@ const FLUSH_RETRY_MS = 3000;
 const PAGE_LIMIT = 50;
 const MAX_PENDING_OPS = 4000;
 const SYNC_MARKER_KEY = 'kty.localSave.syncedDiskUpdatedAt';
-/** 镜像修复版本：与本值不一致时触发一次全量重灌，修补历史遗漏（如 autoIncrement 行未落盘）。 */
+/** 镜像修复版本：与本值不一致时触发一次全量重灌，修补历史遗漏（如 autoIncrement 行未落盘）。
+ *  v3：首次升级时把本机 IDB 的全部现存行推上磁盘，修补「存档创建于镜像生效之前」导致的磁盘缺货。 */
 const MIRROR_VERSION_KEY = 'kty.localSave.mirrorVersion';
-const MIRROR_VERSION = '2';
+const MIRROR_VERSION = '3';
 
 type PutOp = { type: 'put'; value: unknown; key: IDBValidKey };
 type DeleteOp = { type: 'delete'; key: IDBValidKey };
@@ -43,6 +44,70 @@ const pendingClears = new Set<LocalSaveStoreName>();
 
 export function isDiskPersistenceEnabled(): boolean {
   return enabled;
+}
+
+/**
+ * 磁盘是否领先于本会话（很可能另一台设备写过更新）。
+ * 本机写入会同步刷新同步标记，所以标记与磁盘不一致即可认为是“别处更新了”。
+ */
+export async function 检查磁盘是否领先(): Promise<boolean> {
+  if (!enabled) return false;
+  const health = await fetchHealth();
+  if (!health || !health.hasData || health.updatedAt === null) return false;
+  return readSyncMarker() !== String(health.updatedAt);
+}
+
+/** 统计本机浏览器 IndexedDB 里每个 store 的行数（诊断用）。 */
+export async function 统计本机存档(): Promise<Record<string, number>> {
+  const db = await openDB();
+  const 结果: Record<string, number> = {};
+  for (const store of LOCAL_SAVE_STORE_NAMES) {
+    结果[store] = await new Promise<number>((resolve, reject) => {
+      const tx = db.transaction(store, 'readonly');
+      const request = tx.objectStore(store).count();
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(toError(request.error));
+    });
+  }
+  return 结果;
+}
+
+/**
+ * 把本机 IndexedDB 的全部现存行立即推到磁盘。
+ * 用于把电脑已有的进度共享给手机（历史存档若创建于镜像生效之前，单靠写穿透不会补推）。
+ */
+export async function 强制全量落盘(): Promise<void> {
+  if (!enabled) return;
+  await flushAllFromIdb();
+}
+
+async function fetchDiskCounts(): Promise<Record<string, number> | null> {
+  try {
+    const response = await fetch(`${LOCAL_SAVE_API_PREFIX}/stats`);
+    if (!response.ok) return null;
+    const data = await response.json() as { counts?: Record<string, number> };
+    return data.counts ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * 对账：以本机 IDB 为准补齐磁盘。
+ * 若磁盘没有领先（没有别处更新），而本机某个 store 的行数多于磁盘，就把本机全部现存行推上磁盘。
+ * 这是“IDB 在浏览器缓存被清前基本都有货”这一前提下的主推方向，保证手机能拿到电脑上最新最全的进度。
+ */
+export async function 对账并补齐磁盘(): Promise<{ pushed: boolean; reason: string }> {
+  if (!enabled) return { pushed: false, reason: 'disabled' };
+  if (await 检查磁盘是否领先()) return { pushed: false, reason: 'disk-ahead' };
+  const 磁盘 = await fetchDiskCounts();
+  if (!磁盘) return { pushed: false, reason: 'no-disk' };
+  const 本机 = await 统计本机存档();
+  const 落后 = LOCAL_SAVE_STORE_NAMES.filter((store) => (本机[store] ?? 0) > (磁盘[store] ?? 0));
+  if (落后.length === 0) return { pushed: false, reason: 'in-sync' };
+  await flushAllFromIdb();
+  devLog('save', 'disk-reconcile-push', { 落后 });
+  return { pushed: true, reason: `idb-ahead:${落后.join(',')}` };
 }
 
 function readLocalStorage(key: string): string | null {
@@ -274,7 +339,26 @@ function readAllRows(db: IDBDatabase, store: LocalSaveStoreName): Promise<Record
   });
 }
 
-async function restoreStore(store: LocalSaveStoreName, db: IDBDatabase): Promise<number> {
+async function fetchStorePage(
+  store: LocalSaveStoreName,
+  after: string | null,
+): Promise<{ rows: unknown[]; nextAfterKey: string | null } | null> {
+  try {
+    const params = new URLSearchParams({ limit: String(PAGE_LIMIT) });
+    if (after !== null) params.set('after', after);
+    const response = await fetch(`${LOCAL_SAVE_API_PREFIX}/store/${store}?${params.toString()}`);
+    if (!response.ok) return null;
+    const page = await response.json() as { rows?: unknown[]; nextAfterKey?: string | null };
+    return {
+      rows: Array.isArray(page.rows) ? page.rows : [],
+      nextAfterKey: page.nextAfterKey ?? null,
+    };
+  } catch {
+    return null;
+  }
+}
+
+async function clearStore(store: LocalSaveStoreName, db: IDBDatabase): Promise<void> {
   await new Promise<void>((resolve, reject) => {
     const tx = db.transaction(store, 'readwrite');
     tx.objectStore(store).clear();
@@ -282,28 +366,38 @@ async function restoreStore(store: LocalSaveStoreName, db: IDBDatabase): Promise
     tx.onerror = () => reject(toError(tx.error));
     tx.onabort = () => reject(toError(tx.error));
   });
-  let after: string | null = null;
+}
+
+async function writeStoreRows(store: LocalSaveStoreName, db: IDBDatabase, rows: unknown[]): Promise<void> {
+  await new Promise<void>((resolve, reject) => {
+    const tx = db.transaction(store, 'readwrite');
+    const objectStore = tx.objectStore(store);
+    for (const row of rows) objectStore.put(row);
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(toError(tx.error));
+    tx.onabort = () => reject(toError(tx.error));
+  });
+}
+
+/** 用磁盘整库覆盖该 store。先取到首屏再清空——绝不能“清了却没灌回”，那等于抹掉存档。 */
+async function restoreStore(store: LocalSaveStoreName, db: IDBDatabase): Promise<number> {
+  const first = await fetchStorePage(store, null);
+  if (first === null) return 0;
+  await clearStore(store, db);
   let restored = 0;
-  for (;;) {
-    const params = new URLSearchParams({ limit: String(PAGE_LIMIT) });
-    if (after !== null) params.set('after', after);
-    const response = await fetch(`${LOCAL_SAVE_API_PREFIX}/store/${store}?${params.toString()}`);
-    if (!response.ok) break;
-    const page = await response.json() as { rows?: unknown[]; nextAfterKey?: string | null };
-    const rows = Array.isArray(page.rows) ? page.rows : [];
-    if (rows.length) {
-      await new Promise<void>((resolve, reject) => {
-        const tx = db.transaction(store, 'readwrite');
-        const objectStore = tx.objectStore(store);
-        for (const row of rows) objectStore.put(row);
-        tx.oncomplete = () => resolve();
-        tx.onerror = () => reject(toError(tx.error));
-        tx.onabort = () => reject(toError(tx.error));
-      });
-      restored += rows.length;
+  if (first.rows.length) {
+    await writeStoreRows(store, db, first.rows);
+    restored += first.rows.length;
+  }
+  let after = first.nextAfterKey;
+  while (after) {
+    const next = await fetchStorePage(store, after);
+    if (next === null) break;
+    if (next.rows.length) {
+      await writeStoreRows(store, db, next.rows);
+      restored += next.rows.length;
     }
-    if (!page.nextAfterKey) break;
-    after = page.nextAfterKey;
+    after = next.nextAfterKey;
   }
   return restored;
 }
@@ -394,6 +488,11 @@ export async function bootstrapDiskPersistence(): Promise<void> {
     }
   } catch (error) {
     devLogError('save', 'disk-mirror-repair-failed', error);
+  }
+  try {
+    await 对账并补齐磁盘();
+  } catch (error) {
+    devLogError('save', 'disk-reconcile-failed', error);
   }
 }
 

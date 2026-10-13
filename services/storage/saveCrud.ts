@@ -326,7 +326,7 @@ function deleteDeltaBySaveId(deltaStore: IDBObjectStore, saveId: number): void {
   };
 }
 
-async function findAutoDeltaBase(db: IDBDatabase, save: 存档数据): Promise<{ baseSave: 存档数据; baseSaveId: number } | null> {
+export async function findAutoDeltaBase(db: IDBDatabase, save: 存档数据): Promise<{ baseSave: 存档数据; baseSaveId: number } | null> {
   if (save.type !== 'auto') return null;
   const tree = (save as 存档数据 & { saveTree?: import('@/utils/saveTree').存档树元信息 }).saveTree;
   if (!tree?.parentNodeId) return null;
