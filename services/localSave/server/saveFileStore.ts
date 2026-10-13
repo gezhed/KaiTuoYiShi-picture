@@ -129,11 +129,39 @@ export interface StoreRowsPage {
   nextAfterKey: string | null;
 }
 
+/** 读取单个主键对应的行；不存在返回 null。 */
+export async function readStoreRow(
+  store: LocalSaveStoreName,
+  key: string | number,
+  root = resolveSaveRoot(),
+): Promise<unknown> {
+  try {
+    const raw = await fs.readFile(path.join(storeDir(root, store), encodeStoreKey(key)), 'utf8');
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
+}
+
 export async function readStoreRows(
   store: LocalSaveStoreName,
-  options: { afterKey?: string | null; limit?: number; maxBytes?: number; root?: string } = {},
+  options: { afterKey?: string | null; limit?: number; maxBytes?: number; tail?: number; root?: string } = {},
 ): Promise<StoreRowsPage> {
   const root = options.root ?? resolveSaveRoot();
+  // tail：取排序后最新的 N 行（供“只预载最新几个节点”）。
+  if (options.tail !== undefined) {
+    const 键列表 = await listStoreKeys(store, root);
+    const 选取 = 键列表.slice(-Math.max(1, options.tail));
+    const 行: unknown[] = [];
+    for (const 键 of 选取) {
+      try {
+        行.push(JSON.parse(await fs.readFile(path.join(storeDir(root, store), encodeStoreKey(键)), 'utf8')));
+      } catch {
+        // 单行读坏不影响其它行
+      }
+    }
+    return { rows: 行, nextAfterKey: null };
+  }
   const afterKey = options.afterKey ?? null;
   const limit = Math.max(1, options.limit ?? 25);
   const maxBytes = Math.max(1, options.maxBytes ?? 4_000_000);

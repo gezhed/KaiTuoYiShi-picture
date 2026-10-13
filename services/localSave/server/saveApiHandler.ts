@@ -14,6 +14,7 @@ import {
   countStoreRows,
   hasLocalSaveData,
   readManifest,
+  readStoreRow,
   readStoreRows,
   resolveSaveRoot,
   wipeAll,
@@ -57,11 +58,19 @@ export async function handleSaveApi(request: Request): Promise<Response> {
     if (request.method === 'GET' && route.startsWith('store/')) {
       const store = route.slice('store/'.length);
       if (!isLocalSaveStoreName(store)) return json({ ok: false, error: 'unknown-store' }, 404);
+      // 按键取单行：供客户端「按需读取」未预载的存档（不再整库回灌）。
+      const 单键 = url.searchParams.get('key');
+      if (单键 !== null) {
+        const 行 = await readStoreRow(store, 单键);
+        return json({ ok: true, store, rows: 行 === null ? [] : [行] });
+      }
       const afterKey = url.searchParams.get('after');
       const limit = Number(url.searchParams.get('limit') ?? '25');
+      const tail = url.searchParams.get('tail');
       const page = await readStoreRows(store, {
         afterKey: afterKey || null,
         limit: Number.isFinite(limit) ? limit : 25,
+        ...(tail ? { tail: Number(tail) } : {}),
       });
       return json({ ok: true, store, ...page });
     }

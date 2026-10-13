@@ -403,7 +403,24 @@ async function restoreStore(store: LocalSaveStoreName, db: IDBDatabase): Promise
   return restored;
 }
 
-/** 用磁盘整库覆盖 IDB：每个 store 先清空再分页拉取。仅在磁盘确为权威时调用。 */
+/** 进游戏时预载的存档本体的最大行数（其余按需从磁盘读取）。 */
+const 预载存档数 = 10;
+
+/** 只按「最新 N 行」预载一个 store（其余行运行时按需拉取）。 */
+async function restoreStoreTail(store: LocalSaveStoreName, db: IDBDatabase, n: number): Promise<number> {
+  const 响应 = await fetch(`${LOCAL_SAVE_API_PREFIX}/store/${store}?tail=${n}`).catch(() => null);
+  if (!响应 || !响应.ok) return 0;
+  const 数据 = await 响应.json() as { rows?: unknown[] };
+  const rows = Array.isArray(数据.rows) ? 数据.rows : [];
+  await clearStore(store, db);
+  if (rows.length) await writeStoreRows(store, db, rows);
+  return rows.length;
+}
+
+/**
+ * 从磁盘恢复。**不再整库回灌**：设置/索引/增量全量恢复（都小），
+ * 存档本体只预载最新几个（当前主线），其余旧存档以后点开时再按需读取。
+ */
 async function syncFromDisk(diskDbVersion: number | null): Promise<number> {
   if (diskDbVersion !== null && diskDbVersion !== UNIFIED_ID_DB_VERSION) {
     devLog('save', 'disk-restore-version-mismatch', {
@@ -414,8 +431,10 @@ async function syncFromDisk(diskDbVersion: number | null): Promise<number> {
   const db = await openDB();
   let restored = 0;
   for (const store of LOCAL_SAVE_STORE_NAMES) {
+    if (store === 'saves') continue; // 存档本体单独按「最新几个」预载
     restored += await restoreStore(store, db);
   }
+  restored += await restoreStoreTail('saves', db, 预载存档数);
   return restored;
 }
 
