@@ -729,7 +729,7 @@ export function App() {
 
   return (
     <>
-      <LiveSyncBridge />
+      <LiveSyncBridge on同步={() => { void actions.handleContinue(); }} />
       <GameView
         weatherId={state.世界.当前天气}
         topBar={topBar}
