@@ -189,6 +189,32 @@ describe('角色管理面板', () => {
     expect(screen.getByText('写入角色卡')).toBeInTheDocument();
   });
 
+  it('角色卡可以绑定 LoRA：新增、改权重、删除都会落盘', async () => {
+    const 捕获: { 系统?: 文生图系统设置 } = {};
+    const 壳 = render(<TestShell 初始={建系统()} on系统={(系统) => { 捕获.系统 = 系统; }} />);
+    fireEvent.click(await screen.findByRole('button', { name: /流萤/ }));
+
+    // 初始没有绑定。
+    expect(screen.getByText(/还没有绑定 LoRA/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '新增' }));
+
+    const 名称框 = await screen.findByLabelText('LoRA 1 名称');
+    fireEvent.change(名称框, { target: { value: 'krea.safetensors' } });
+    fireEvent.change(screen.getByRole('spinbutton'), { target: { value: '0.75' } });
+
+    await waitFor(() => {
+      expect(捕获.系统?.角色卡.char_1.LoRA?.[0]).toMatchObject({ 名称: 'krea.safetensors', 权重: 0.75 });
+    });
+
+    // 「删除」在页面上不止一个（角色卡本身也有），只点 LoRA 行里那个。
+    const LoRA行 = screen.getByLabelText('LoRA 1 名称').closest('div')?.parentElement;
+    fireEvent.click(LoRA行!.querySelector('button')!);
+    await waitFor(() => {
+      expect(捕获.系统?.角色卡.char_1.LoRA ?? []).toHaveLength(0);
+    });
+    壳.unmount();
+  });
+
   it('角色卡页给出可复制的标签（含服装与只出镜写法）', async () => {
     const 写文本 = vi.fn(async () => {});
     Object.assign(navigator, { clipboard: { writeText: 写文本 } });

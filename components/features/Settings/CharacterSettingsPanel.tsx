@@ -59,6 +59,7 @@ export function CharacterSettingsPanel({
   主API模型,
   主API地址,
   onFetchModels,
+  LoRA列表,
 }: {
   settings: 文生图系统设置;
   onPatch: (部分: Partial<文生图系统设置>) => void;
@@ -80,6 +81,8 @@ export function CharacterSettingsPanel({
   主API模型?: string;
   主API地址?: string;
   onFetchModels?: (config: ConnectionTestConfig) => Promise<string[]>;
+  /** 服务器上的 LoRA 列表（ComfyUI「读取模型列表」得到）；空则编辑页手填。 */
+  LoRA列表?: string[];
 }) {
   const [页, set页] = useState<角色页签>('cards');
   const [选中Id, set选中Id] = useState<string>('');
@@ -423,6 +426,7 @@ export function CharacterSettingsPanel({
                 参考模式={settings.novelai.参考模式}
                 on参考模式变更={(下一模式) => onPatch({ novelai: { ...settings.novelai, 参考模式: 下一模式 } })}
                 NovelAI模型={settings.novelai.模型}
+                LoRA列表={LoRA列表}
               />
             ) : (
               <面板 title="角色详情">

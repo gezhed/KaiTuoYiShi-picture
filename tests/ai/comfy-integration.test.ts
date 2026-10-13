@@ -120,6 +120,72 @@ describe('出图链路（假 ComfyUI）', () => {
     expect(已提交['4'].inputs.ckpt_name).toBe('模型A.safetensors');
   });
 
+  it('角色 LoRA 槽位：只填出场角色的槽，空槽的 LoraLoader 被摘掉并接回上游', async () => {
+    const 记录 = 安装假ComfyUI();
+    // 在标准工作流上串两个 LoRA 槽：4 → 20 → 21 → KSampler / CLIPTextEncode。
+    const 带LoRA = JSON.parse(工作流JSON) as Record<string, { class_type?: string; inputs: Record<string, unknown> }>;
+    带LoRA['20'] = {
+      class_type: 'LoraLoader',
+      inputs: { model: ['4', 0], clip: ['4', 1], lora_name: '%lora_name_1%', strength_model: '%lora_weight_1%', strength_clip: '%lora_weight_1%' },
+    };
+    带LoRA['21'] = {
+      class_type: 'LoraLoader',
+      inputs: { model: ['20', 0], clip: ['20', 1], lora_name: '%lora_name_2%', strength_model: '%lora_weight_2%', strength_clip: '%lora_weight_2%' },
+    };
+    带LoRA['3'].inputs.model = ['21', 0];
+    带LoRA['6'].inputs.clip = ['21', 1];
+    带LoRA['7'].inputs.clip = ['21', 1];
+
+    await 生成ComfyUI图片({
+      正向提示词: '1girl, 流萤',
+      负向提示词: 'lowres',
+      种子: 7,
+      // 只有一个角色出场 → 只有第 1 槽有值。
+      lora: [{ 名称: 'krea.safetensors', 权重: 0.75 }],
+    }, {
+      comfyui: 建设置((设置) => {
+        设置.档案列表[设置.当前档案].工作流Json = JSON.stringify(带LoRA);
+      }),
+    });
+
+    const 已提交 = 记录.最后提交?.prompt as Record<string, { inputs: Record<string, unknown> }>;
+    // 第 1 槽填上了名字与权重（权重是数字）。
+    expect(已提交['20'].inputs.lora_name).toBe('krea.safetensors');
+    expect(已提交['20'].inputs.strength_model).toBe(0.75);
+    expect(已提交['20'].inputs.strength_clip).toBe(0.75);
+    // 第 2 槽的节点整条消失，下游接到第 1 槽。
+    expect(已提交['21']).toBeUndefined();
+    expect((已提交['3'].inputs.model as unknown[])[0]).toBe('20');
+    expect((已提交['6'].inputs.clip as unknown[])[0]).toBe('20');
+    // 提交体里不该残留任何 LoRA 占位符。
+    expect(JSON.stringify(已提交)).not.toContain('%lora_');
+  });
+
+  it('一个角色 LoRA 都没有时，两个槽都摘掉，KSampler 直接接 Checkpoint', async () => {
+    const 记录 = 安装假ComfyUI();
+    const 带LoRA = JSON.parse(工作流JSON) as Record<string, { class_type?: string; inputs: Record<string, unknown> }>;
+    带LoRA['20'] = {
+      class_type: 'LoraLoader',
+      inputs: { model: ['4', 0], clip: ['4', 1], lora_name: '%lora_name_1%', strength_model: '%lora_weight_1%' },
+    };
+    带LoRA['3'].inputs.model = ['20', 0];
+    带LoRA['6'].inputs.clip = ['20', 1];
+
+    await 生成ComfyUI图片({
+      正向提示词: 'x',
+      负向提示词: 'y',
+    }, {
+      comfyui: 建设置((设置) => {
+        设置.档案列表[设置.当前档案].工作流Json = JSON.stringify(带LoRA);
+      }),
+    });
+
+    const 已提交 = 记录.最后提交?.prompt as Record<string, { inputs: Record<string, unknown> }>;
+    expect(已提交['20']).toBeUndefined();
+    expect((已提交['3'].inputs.model as unknown[])[0]).toBe('4');
+    expect((已提交['6'].inputs.clip as unknown[])[0]).toBe('4');
+  });
+
   it('提交体里不含任何未替换的占位符', async () => {
     const 记录 = 安装假ComfyUI();
     await 生成ComfyUI图片({

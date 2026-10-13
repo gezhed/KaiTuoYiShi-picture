@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { 运行自检 } from '@/services/ai/imageGen/preflight';
-import { 创建默认文生图系统设置 } from '@/models/genSystem';
+import { 创建默认文生图系统设置, 创建空角色部位字段, 建LoRA条目 } from '@/models/genSystem';
 import type { 文生图系统设置 } from '@/models/genSystem';
 
 function 建设置(补丁: (项: 文生图系统设置) => void = () => {}): 文生图系统设置 {
@@ -311,6 +311,31 @@ describe('运行自检：工作流资源校验（用服务端列表核对写死�
     lora: ['add_detail.safetensors'],
   };
 
+
+/** 造一张带 LoRA 的角色卡（角色 LoRA 槽位自检用）。 */
+function 建带LoRA的角色(名称: string) {
+  return {
+    ...创建空角色部位字段(),
+    id: 'char_lora',
+    nameCN: '流萤',
+    nameEN: '',
+    enabled: true,
+    aliases: [],
+    outfits: [],
+    selectedOutfitId: '',
+    photoMedia: [],
+    audioMedia: [],
+    selectedPhotoId: '',
+    selectedAudioId: '',
+    photoPrompt: '',
+    sendPhoto: false,
+    位置: null,
+    createdAt: 0,
+    updatedAt: 0,
+    LoRA: [{ ...建LoRA条目(名称), 权重: 0.8 }],
+  };
+}
+
   const 工作流 = (ckpt: string) => JSON.stringify({
     4: { class_type: 'CheckpointLoaderSimple', inputs: { ckpt_name: ckpt } },
     6: { class_type: 'CLIPTextEncode', inputs: { text: '%prompt%' } },
@@ -357,6 +382,31 @@ describe('运行自检：工作流资源校验（用服务端列表核对写死�
     const 空资源 = { ...资源, 模型: [] };
     const 结果 = 运行自检(建Comfy设置('任意模型.safetensors'), 空资源);
     expect(标题列表(结果).some((甲) => 甲.includes('不存在'))).toBe(false);
+  });
+
+  it('角色绑了 LoRA 但工作流没有槽位占位符时提醒（否则永远不生效）', () => {
+    const 设置 = 创建默认文生图系统设置();
+    设置.启用 = true;
+    设置.渠道 = 'comfyui';
+    const 角色 = 建带LoRA的角色('krea.safetensors');
+    设置.角色卡 = { [角色.id]: 角色 };
+    设置.角色启用列表 = [角色.id];
+    const 档案 = 设置.comfyui.档案列表[设置.comfyui.当前档案];
+    档案.连接.地址 = 'http://127.0.0.1:8188';
+    档案.工作流Json = JSON.stringify({
+      1: { class_type: 'CheckpointLoaderSimple', inputs: { ckpt_name: 'a.safetensors' } },
+      2: { class_type: 'CLIPTextEncode', inputs: { text: '%prompt%' } },
+    });
+    const 标题 = 标题列表(运行自检(设置, 资源));
+    expect(标题.some((甲) => 甲.includes('没有 LoRA 槽位占位符'))).toBe(true);
+
+    // 工作流里写上槽位后不再报这一条。
+    档案.工作流Json = JSON.stringify({
+      1: { class_type: 'LoraLoader', inputs: { lora_name: '%lora_name_1%', strength_model: '%lora_weight_1%' } },
+      2: { class_type: 'CLIPTextEncode', inputs: { text: '%prompt%' } },
+    });
+    const 标题2 = 标题列表(运行自检(设置, 资源));
+    expect(标题2.some((甲) => 甲.includes('没有 LoRA 槽位占位符'))).toBe(false);
   });
 
   it('LoRA / VAE / CLIP 同样会被核对', () => {

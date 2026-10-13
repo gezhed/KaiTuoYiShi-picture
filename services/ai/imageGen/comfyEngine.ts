@@ -19,6 +19,7 @@
  */
 
 import type { ComfyUI参数设置, ComfyUI设置 } from '@/models/genSystem';
+import { LoRA槽位数 } from '@/models/genSystem';
 import { 替换工作流占位符, 扫描剩余占位符 } from './workflowTokens';
 import {
   中断Comfy任务,
@@ -216,6 +217,42 @@ function 解析工作流文本(文本: string): ComfyUI工作流 {
   return 解析后 as ComfyUI工作流;
 }
 
+/**
+ * 把「绑到未填 LoRA 槽」的节点标成 `_skip`。
+ *
+ * 为什么要这样：`%lora_name_2%` 在只有 1 个角色 LoRA 时会被替换成空串，
+ * 而 ComfyUI 的 `LoraLoader` 拿到空文件名会直接报错。与其让用户为每个角色
+ * 各留一份工作流，不如让**空槽自动消失** —— 复用已有的 `处理跳过节点`：
+ * 它会把被跳过节点的下游接到上游，于是 Checkpoint → Lora1(空) → Lora2(用) → KSampler
+ * 变成 Checkpoint → Lora2 → KSampler。
+ *
+ * 必须在校验 token 替换**之前**调用：替换一跑，原始 token 文本就没了。
+ * 返回是否发生了标记（调用方据此决定要不要跑重映射）。
+ */
+export function 标记未用LoRA槽(
+  工作流: ComfyUI工作流,
+  lora: Array<{ 名称: string }> | undefined,
+): boolean {
+  const 空槽 = new Set<number>();
+  for (let 序号 = 1; 序号 <= LoRA槽位数; 序号 += 1) {
+    if (!(lora?.[序号 - 1]?.名称 ?? '').trim()) 空槽.add(序号);
+  }
+  if (空槽.size === 0) return false;
+
+  let 改动 = false;
+  for (const 节点 of Object.values(工作流)) {
+    if (!节点 || typeof 节点 !== 'object') continue;
+    const 文本 = JSON.stringify(节点.inputs ?? {});
+    for (const 序号 of 空槽) {
+      if (!文本.includes(`"%lora_name_${序号}%"`)) continue;
+      节点._skip = true;
+      改动 = true;
+      break;
+    }
+  }
+  return 改动;
+}
+
 export interface Comfy生成上下文 {
   comfyui: ComfyUI设置;
   对象信息?: Record<string, unknown>;
@@ -265,14 +302,8 @@ export async function 生成ComfyUI图片(
       throw new Error('ComfyUI 工作流为空。请在设置里导入 API 格式工作流。');
     }
 
-    // 先做跳节点重映射，再做 token 替换：替换是纯文本的，重映射会改结构。
-    const 工作流对象 = 解析工作流文本(工作流文本);
-    const 有跳过 = Object.values(工作流对象).some((节点) => 节点?._skip);
-    if (有跳过) {
-      工作流文本 = JSON.stringify(处理跳过节点(工作流对象, 上下文.对象信息 ?? {}));
-    }
-
-    const 替换后 = 替换工作流占位符(工作流文本, {
+    // 取值先算好：LoRA 槽位既参与替换，也决定「哪些槽是空的、要跳过哪个节点」。
+    const 取值 = {
       seed: 种子,
       steps: 参数.步数,
       cfgScale: 参数.cfg,
@@ -292,7 +323,19 @@ export async function 生成ComfyUI图片(
       ipaAtmosphereStrength: 参数.氛围强度,
       referenceImage: 参考图文件名,
       inpaintDenoise: 参数.重绘强度,
-    });
+      lora: 请求.lora,
+    };
+
+    // 先做跳节点重映射，再做 token 替换：替换是纯文本的，重映射会改结构。
+    const 工作流对象 = 解析工作流文本(工作流文本);
+    // 这轮没有用到的 LoRA 槽：把绑它的节点标成跳过，免得 ComfyUI 收到空文件名。
+    const 有空槽 = 标记未用LoRA槽(工作流对象, 取值.lora);
+    const 有跳过 = 有空槽 || Object.values(工作流对象).some((节点) => 节点?._skip);
+    if (有跳过) {
+      工作流文本 = JSON.stringify(处理跳过节点(工作流对象, 上下文.对象信息 ?? {}));
+    }
+
+    const 替换后 = 替换工作流占位符(工作流文本, 取值);
 
     let 最终工作流: ComfyUI工作流;
     try {

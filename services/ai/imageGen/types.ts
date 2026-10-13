@@ -47,6 +47,8 @@ export interface 生成请求 {
   种子?: number;
   参考图?: { 数据地址: string; 文件名: string } | null;
   标题?: string;
+  /** 本轮出场角色的 LoRA 槽位（ComfyUI 工作流里的 `%lora_name_N%` 承接）。 */
+  lora?: Array<{ 名称: string; 权重: number }>;
   signal?: AbortSignal;
 }
 

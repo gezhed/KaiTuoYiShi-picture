@@ -1077,6 +1077,7 @@ export function ComfyUISettingsConsole({
           主API模型={主API模型}
           主API地址={主API地址}
           onFetchModels={onFetchModels}
+          LoRA列表={资源?.lora ?? []}
         />
       )}
 

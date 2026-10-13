@@ -24,7 +24,7 @@ import type {
   文生图系统设置,
   注入模板集,
 } from '@/models/genSystem';
-import { 内置注入模板, 默认注入模板名 } from '@/models/genSystem';
+import { 内置注入模板, 默认注入模板名, 渲染LoRA标签 } from '@/models/genSystem';
 import { 归一化触发文本 } from './characterPrompt';
 
 /** 占位符语法 `{变量名}`（上游 `PLACEHOLDER_RE` L29756）。 */
@@ -112,6 +112,11 @@ export function 取角色注入数据(
     imageDesc: 媒体.图片描述 || '',
     audioId: 媒体.音频媒体Id || '',
     audioDesc: 媒体.音频描述 || '',
+    /*
+     * LoRA：ComfyUI 侧不走文本（由工作流的槽位占位符承接），这里给出文本标签
+     * 主要是给 SD / A1111 渠道用 —— 写进注入模板后，被触发的角色才会带上它。
+     */
+    lora: 渲染LoRA标签(角色.LoRA),
   };
 }
 

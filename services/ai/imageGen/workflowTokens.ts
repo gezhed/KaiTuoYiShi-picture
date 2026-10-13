@@ -51,9 +51,23 @@ export const 占位符表: 占位符定义[] = [
   { 占位符: '%inpaint_denoise%', 名称: '重绘强度', 匹配键: ['inpaint_denoise', 'denoise'], 类型: 'number' },
   { 占位符: '%inpaint_positive%', 名称: '重绘正面提示词', 匹配键: ['inpaint_positive'], 类型: 'string' },
   { 占位符: '%inpaint_negative%', 名称: '重绘负面提示词', 匹配键: ['inpaint_negative'], 类型: 'string' },
+  // 角色 LoRA 槽位：值是「本轮出场的角色」按顺序绑定的 LoRA；没填的槽会在提交前跳过该节点。
+  ...[1, 2, 3, 4].flatMap((序号) => ([
+    { 占位符: `%lora_name_${序号}%`, 名称: `LoRA ${序号} 名称`, 匹配键: ['lora_name'], 类型: 'string' as const },
+    {
+      占位符: `%lora_weight_${序号}%`,
+      名称: `LoRA ${序号} 权重`,
+      匹配键: ['strength_model', 'strength_clip'],
+      类型: 'number' as const,
+    },
+  ])),
 ];
 
-const 数值占位符 = new Set(['%seed%', '%steps%', '%cfg_scale%', '%width%', '%height%', '%c_quanzhong%', '%c_idquanzhong%', '%c_xijie%', '%c_fenwei%', '%inpaint_denoise%']);
+const 数值占位符 = new Set([
+  '%seed%', '%steps%', '%cfg_scale%', '%width%', '%height%',
+  '%c_quanzhong%', '%c_idquanzhong%', '%c_xijie%', '%c_fenwei%', '%inpaint_denoise%',
+  ...Array.from({ length: 4 }, (_, 序号) => `%lora_weight_${序号 + 1}%`),
+]);
 
 /** 按输入键名推荐占位符；仅用于编辑期提示，不参与生成期路由。 */
 export function 推荐占位符(输入键名: string): string | null {
@@ -109,6 +123,14 @@ export function 替换工作流占位符(工作流Json: string, 取值: 占位�
   数字('%inpaint_denoise%', 取值.inpaintDenoise || 0.75, 0.75);
   文本('%inpaint_positive%', 取值.inpaintPositive ?? '');
   文本('%inpaint_negative%', 取值.inpaintNegative ?? '');
+  // 角色 LoRA 槽位：`取值.lora` 只包含**本轮出场角色**的 LoRA（见 characterLora）。
+  // 空槽在这里替换成空串只是「占位符消失」，真正要不要跳过该节点由
+  // comfyEngine 的 `标记未用LoRA槽` 决定（它必须在替换**之前**读原始 token）。
+  for (let 序号 = 1; 序号 <= 4; 序号 += 1) {
+    const 槽 = 取值.lora?.[序号 - 1];
+    文本(`%lora_name_${序号}%`, 槽?.名称 ?? '');
+    数字(`%lora_weight_${序号}%`, 槽?.权重 ?? 1);
+  }
 
   return 结果;
 }

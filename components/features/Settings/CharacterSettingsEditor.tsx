@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import type { 角色卡, 服装条目 } from '@/models/genSystem';
-import { 创建空角色部位字段, 角色部位字段名 } from '@/models/genSystem';
+import { 创建空角色部位字段, 角色部位字段名, 建LoRA条目, 夹LoRA权重, LoRA槽位数, type 角色LoRA条目 } from '@/models/genSystem';
 import { 追加标签串 } from '@/services/vocabulary/vocabulary';
 import { CharacterMediaPanel } from './CharacterMediaPanel';
 import { NovelAIReferencePanel } from './NovelAIReferencePanel';
@@ -166,6 +166,7 @@ export function CharacterSettingsEditor({
   参考模式,
   on参考模式变更,
   NovelAI模型,
+  LoRA列表,
 }: {
   角色: 角色卡;
   onChange: (next: 角色卡) => void;
@@ -183,9 +184,22 @@ export function CharacterSettingsEditor({
   参考模式?: 'character' | 'vibe';
   on参考模式变更?: (下一模式: 'character' | 'vibe') => void;
   NovelAI模型?: string;
+  /** 服务器上的 LoRA 列表（「读取模型列表」得到），供下拉选择；空则手填。 */
+  LoRA列表?: string[];
 }) {
   const [展开段, set展开段] = useState<string>('身份');
   const [提示, set提示] = useState('');
+
+  /** 改一条 LoRA（权重在这里就夹好，避免存进负值/超大值）。 */
+  const 补丁LoRA = (id: string, 部分: Partial<角色LoRA条目>) => {
+    补丁({
+      LoRA: (角色.LoRA ?? []).map((项) => (
+        项.id === id
+          ? { ...项, ...部分, ...(部分.权重 !== undefined ? { 权重: 夹LoRA权重(部分.权重) } : {}) }
+          : 项
+      )),
+    });
+  };
   // 词库面板追加时的落点：最后一个获得焦点的部位字段，默认落在「角色特征」。
   const 上次聚焦 = useRef<typeof 角色部位字段名[number]>('characterTraits');
 
@@ -251,6 +265,81 @@ export function CharacterSettingsEditor({
           </div>
         );
       })}
+
+      <面板
+        title={`LoRA（${(角色.LoRA ?? []).filter((项) => 项.名称.trim()).length} 个）`}
+        desc="绑定后这条 LoRA 只在**该角色出场**时生效。ComfyUI 需要工作流里有槽位占位符（见下方说明）；SD / A1111 渠道把 {lora} 写进注入模板即可。"
+      >
+        {(角色.LoRA ?? []).length === 0 ? (
+          <提示条
+            kind="info"
+            text="还没有绑定 LoRA。点「新增」填服务器上的文件名（如 krea.safetensors），或先在「文生图 → ComfyUI → 连接」点「读取模型列表」把 LoRA 列出来。"
+          />
+        ) : null}
+        <div className="space-y-2">
+          {(角色.LoRA ?? []).map((条目, 序号) => (
+            <div key={条目.id} className="flex flex-wrap items-end gap-2">
+              <字段 label={`LoRA ${序号 + 1}`}>
+                {LoRA列表 && LoRA列表.length > 0 ? (
+                  <select
+                    aria-label={`LoRA ${序号 + 1} 名称`}
+                    className="kaituo-input w-72 px-2 py-1 text-xs"
+                    value={条目.名称}
+                    onChange={(事件) => 补丁LoRA(条目.id, { 名称: 事件.target.value })}
+                  >
+                    <option value="">（选择 LoRA）</option>
+                    {LoRA列表.map((名) => <option key={名} value={名}>{名}</option>)}
+                  </select>
+                ) : (
+                  <input
+                    aria-label={`LoRA ${序号 + 1} 名称`}
+                    className="kaituo-input w-72 px-2 py-1 font-mono text-xs"
+                    value={条目.名称}
+                    placeholder="krea.safetensors"
+                    onChange={(事件) => 补丁LoRA(条目.id, { 名称: 事件.target.value })}
+                  />
+                )}
+              </字段>
+              <字段 label="权重">
+                <input
+                  type="number"
+                  min={0}
+                  max={2}
+                  step={0.05}
+                  className="kaituo-input w-20 px-2 py-1 text-xs"
+                  value={条目.权重}
+                  onChange={(事件) => 补丁LoRA(条目.id, { 权重: Number(事件.target.value) })}
+                />
+              </字段>
+              <次级按钮
+                onClick={() => 补丁({
+                  LoRA: (角色.LoRA ?? []).filter((项) => 项.id !== 条目.id),
+                })}
+              >
+                删除
+              </次级按钮>
+            </div>
+          ))}
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <次级按钮
+            disabled={(角色.LoRA ?? []).length >= LoRA槽位数}
+            onClick={() => 补丁({ LoRA: [...(角色.LoRA ?? []), 建LoRA条目()] })}
+          >
+            新增
+          </次级按钮>
+          <span className="text-[11px]" style={{ color: 'rgba(var(--tj-text-secondary), 0.68)' }}>
+            最多 {LoRA槽位数} 个生效（与工作流槽位数一致）；同名去重、按出场顺序填槽。
+          </span>
+        </div>
+        <div className="text-[11px] leading-relaxed" style={{ color: 'rgba(var(--tj-text-secondary), 0.68)' }}>
+          ComfyUI 工作流里串 {LoRA槽位数} 个 <code>LoraLoader</code>，把第 N 个的名字写{' '}
+          <code>{'%lora_name_N%'}</code>、模型与 CLIP 权重都写 <code>{'%lora_weight_N%'}</code>：
+          应用会把**本轮出场的角色**的 LoRA 依次填进槽位，没填的槽在提交前自动跳过
+          （不需要为空槽准备备用工作流）。SD / A1111 渠道不用改工作流，把 <code>{'{lora}'}</code>{' '}
+          写进「注入模板 → 角色列表」即可输出 <code>{'<lora:名称:权重>'}</code>。
+        </div>
+      </面板>
 
       <面板
         title="提示词里怎么写"

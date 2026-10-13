@@ -24,7 +24,8 @@
 import type { 生成参数快照, 文生图系统设置 } from '@/models/genSystem';
 import type { Comfy生成上下文 } from './comfyEngine';
 import { 生成ComfyUI图片 } from './comfyEngine';
-import { 处理角色提示词, 提取出场角色, type 角色匹配上下文 } from './characterPrompt';
+import { 处理角色提示词, 提取出场角色, 命中启用角色, type 角色匹配上下文 } from './characterPrompt';
+import { 取LoRA槽位, type LoRA槽位 } from './characterLora';
 import {
   应用替换规则,
   应用分角色替换规则,
@@ -127,6 +128,10 @@ export function 组装单图提示词(
   宽度: number | null;
   高度: number | null;
   预设名称: string;
+  /** 本轮认出的出场角色名（用于界面提示与诊断）。 */
+  出场角色: string[];
+  /** 本轮要挂的角色 LoRA 槽位（最多 `LoRA槽位数` 个）。 */
+  lora: LoRA槽位[];
 } {
   const 档案 = 设置.comfyui.档案列表[设置.comfyui.当前档案];
   if (!档案) throw new Error(`ComfyUI 配置档案不存在：${设置.comfyui.当前档案}`);
@@ -140,6 +145,17 @@ export function 组装单图提示词(
 
   const 规则集 = 设置.提示词.替换规则列表[设置.提示词.当前替换规则];
   const 替换 = 应用替换规则(角色替换.提示词, 规则集?.规则文本 ?? '');
+
+  /*
+   * 本轮出场的角色 → LoRA 槽位。
+   *
+   * 主口径是 `$…$` 段（`提取出场角色` 把段解回角色卡）：图里到底有谁，它最清楚。
+   * 兜底用「名字直接出现在提示词里的启用角色」——有些预设是纯 tag、不写 `$…$`，
+   * 这时至少还能靠英文名（如 `march 7th`）认出来。
+   */
+  const 出场 = 提取出场角色(剥尺寸.提示词, 角色上下文);
+  const 本次角色 = 出场.length > 0 ? 出场.map((项) => 项.角色) : 命中启用角色(剥尺寸.提示词, 角色上下文);
+  const lora = 取LoRA槽位(本次角色);
 
   // 固定画风只在启用时参与组装；关闭时传空字符串，行为与没有这一层一致。
   const 画风 = 设置.提示词.固定画风?.启用
@@ -164,6 +180,8 @@ export function 组装单图提示词(
     宽度: 剥尺寸.宽度,
     高度: 剥尺寸.高度,
     预设名称,
+    出场角色: 本次角色.map((角色) => 角色.nameCN || 角色.nameEN || 角色.id),
+    lora,
   };
 }
 
@@ -273,6 +291,8 @@ interface 组装结果 {
   宽度: number | null;
   高度: number | null;
   预设名称: string;
+  出场角色?: string[];
+  lora?: LoRA槽位[];
 }
 
 async function 生成ComfyUI插图(
@@ -289,6 +309,7 @@ async function 生成ComfyUI插图(
       高度: 组装.高度 ?? undefined,
       参考图: 请求.参考图 ?? undefined,
       标题: 请求.标题,
+      lora: 组装.lora,
       signal: 请求.signal,
     },
     { comfyui: 设置.comfyui, 对象信息: 上下文?.对象信息, 任务Id: 上下文?.任务Id },

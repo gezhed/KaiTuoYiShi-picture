@@ -25,6 +25,9 @@ const 角色变量 = [
   'upperSFW', 'upperSFWBack', 'lowerSFW', 'lowerSFWBack',
   'upperNSFW', 'upperNSFWBack', 'lowerNSFW', 'lowerNSFWBack',
   'negative', 'outfits', 'imageId', 'imageDesc', 'audioId', 'audioDesc',
+  // 本应用新增：渲染成 `<lora:名称:权重>`，给 SD / A1111 渠道用
+  //（ComfyUI 走工作流的 %lora_name_N% 槽位，不经过文本）。
+  'lora',
 ];
 
 /** 服装模板可用的变量（来源 `getOutfitPromptData` L29184-L29197）。 */

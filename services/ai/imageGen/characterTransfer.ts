@@ -22,7 +22,7 @@
  */
 
 import type { 角色卡, 角色媒体, 角色部位字段, 服装条目, 文生图系统设置 } from '@/models/genSystem';
-import { 创建空角色部位字段 } from '@/models/genSystem';
+import { 归一化LoRA列表, 创建空角色部位字段 } from '@/models/genSystem';
 import { 保存角色媒体, 读取角色媒体数据地址, 生成媒体Id } from '@/services/characterMedia';
 import { dataUrlToBlob } from '@/utils/albumObjectUrl';
 
@@ -426,6 +426,8 @@ export function 归一化导入角色卡(
     outfits: 服装列表,
     selectedOutfitId: 取值(记录, 'selectedOutfitId') || 服装列表[0]?.id || '',
     photoMedia: 归一媒体(记录.photoMedia, 'photo'),
+    // 角色包带上 LoRA 绑定：分享角色时不用再手填一次。
+    LoRA: 归一化LoRA列表(记录.LoRA ?? 记录.lora),
     audioMedia: 归一媒体(记录.audioMedia, 'audio'),
     selectedPhotoId: 媒体Id映射[取值(记录, 'selectedPhotoId')] ?? 取值(记录, 'selectedPhotoId'),
     selectedAudioId: 媒体Id映射[取值(记录, 'selectedAudioId')] ?? 取值(记录, 'selectedAudioId'),

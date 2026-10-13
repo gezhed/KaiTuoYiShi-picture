@@ -114,10 +114,34 @@ describe('推荐占位符', () => {
 });
 
 describe('占位符表与识别', () => {
-  it('表内含 23 个占位符，且与来源一致', () => {
-    expect(占位符表).toHaveLength(23);
-    expect(占位符表.map((项) => 项.占位符)).toContain('%MODEL_NAME%');
-    expect(占位符表.map((项) => 项.占位符)).toContain('%inpaint_negative%');
+  it('表内含来源那 23 个占位符 + 4 组角色 LoRA 槽位', () => {
+    // 23 个来自上游 replacepro；LoRA 槽位是本应用新增的（4 组 × 名称/权重 = 8 个）。
+    expect(占位符表).toHaveLength(23 + 8);
+    const 全部 = 占位符表.map((项) => 项.占位符);
+    expect(全部).toContain('%MODEL_NAME%');
+    expect(全部).toContain('%inpaint_negative%');
+    for (const 序号 of [1, 2, 3, 4]) {
+      expect(全部).toContain(`%lora_name_${序号}%`);
+      expect(全部).toContain(`%lora_weight_${序号}%`);
+    }
+  });
+
+  it('LoRA 槽位：名称是字符串、权重是数字，且按出场顺序替换', () => {
+    const 文本 = JSON.stringify({
+      1: { class_type: 'LoraLoader', inputs: { lora_name: '%lora_name_1%', strength_model: '%lora_weight_1%', strength_clip: '%lora_weight_1%' } },
+      2: { class_type: 'LoraLoader', inputs: { lora_name: '%lora_name_2%', strength_model: '%lora_weight_2%' } },
+    });
+    const 替换后 = 替换工作流占位符(文本, {
+      ...建取值(),
+      lora: [{ 名称: 'a.safetensors', 权重: 0.8 }],
+    });
+    // 输入是紧凑 JSON，替换后仍紧凑。
+    expect(替换后).toContain('"lora_name":"a.safetensors"');
+    expect(替换后).toContain('"strength_model":0.8');
+    expect(替换后).toContain('"strength_clip":0.8');
+    // 没填的槽替换成空串（真正的「跳过该节点」由 comfyEngine 在替换前处理）。
+    expect(替换后).toContain('"lora_name":""');
+    expect(替换后).toContain('"strength_model":1');
   });
 
   it('是占位符值只认 %…%', () => {

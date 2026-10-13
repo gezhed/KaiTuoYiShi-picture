@@ -66,6 +66,8 @@ export interface 占位符取值 {
   inpaintDenoise?: number | string;
   inpaintPositive?: string;
   inpaintNegative?: string;
+  /** 本轮出场角色的 LoRA 槽位（最多 `LoRA槽位数` 个）；缺省即没有。 */
+  lora?: Array<{ 名称: string; 权重: number }>;
 }
 
 /* ------------------------------------------------------------------ *
@@ -203,6 +205,80 @@ export interface 角色参考组 {
 /** 上游硬上限：每组最多 4 张参考图。 */
 export const 角色参考上限 = 4;
 
+/**
+ * 角色绑定的 LoRA。
+ *
+ * 两个用途：
+ *   ① SD / A1111 渠道：渲染成 `<lora:名称:权重>` 文本标签（A1111 自己解析）；
+ *   ② ComfyUI 渠道：由工作流里的**槽位占位符** `%lora_name_1%` / `%lora_weight_1%`
+ *      承接 —— 应用只把「本轮出场的角色」的 LoRA 按顺序填进槽位，
+ *      没被填的槽由 `处理跳过节点` 自动摘掉（工作流里可以放心串 4 个 LoraLoader）。
+ */
+export interface 角色LoRA条目 {
+  id: string;
+  /** 服务器上的 LoRA 文件名；有子目录时按 ComfyUI 的写法，如 `sub/x.safetensors`。 */
+  名称: string;
+  /** 0~2；ComfyUI 侧同时喂 strength_model 与 strength_clip。 */
+  权重: number;
+}
+
+/**
+ * ComfyUI 工作流可用的 LoRA 槽位数（`%lora_name_1%` … `%lora_name_4%`）。
+ *
+ * 为什么是固定槽位而不是动态插节点：提交前改工作流**结构**（插节点、重接 line）
+ * 风险远高于文本替换；固定槽位沿用现有机制（文本占位符 + `_skip` 重映射），
+ * 出问题时用户还能在 ComfyUI 里看见那条链。
+ */
+export const LoRA槽位数 = 4;
+
+export function 建LoRA条目(名称 = ''): 角色LoRA条目 {
+  return {
+    id: `lora_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+    名称: 名称.trim(),
+    权重: 1,
+  };
+}
+
+/** 权重夹到 0~2（负权重是 A1111 的反向用法，本应用不做，避免误配成负值）。 */
+export function 夹LoRA权重(值: unknown): number {
+  const 数 = typeof 值 === 'number' ? 值 : Number(值);
+  if (!Number.isFinite(数)) return 1;
+  return Math.min(2, Math.max(0, Math.round(数 * 100) / 100));
+}
+
+/** 归一化角色卡上的 LoRA 列表：丢空名、夹权重、补 id；不截断（超出的在收集槽位时被丢弃并提示）。 */
+export function 归一化LoRA列表(输入: unknown): 角色LoRA条目[] {
+  if (!Array.isArray(输入)) return [];
+  const 结果: 角色LoRA条目[] = [];
+  for (const [序号, 项] of 输入.entries()) {
+    if (!项 || typeof 项 !== 'object') continue;
+    const 源 = 项 as Partial<角色LoRA条目> & { name?: unknown; weight?: unknown };
+    const 名称 = String(源.名称 ?? 源.name ?? '').trim();
+    if (!名称) continue;
+    结果.push({
+      id: String(源.id ?? `lora_${序号 + 1}`),
+      名称,
+      权重: 夹LoRA权重(源.权重 ?? 源.weight ?? 1),
+    });
+  }
+  return 结果;
+}
+
+/** 权重文本：整数不带小数点，便于写进 `<lora:名称:1>`。 */
+function LoRA权重文本(权重: number): string {
+  const 夹 = 夹LoRA权重(权重);
+  return Number.isInteger(夹) ? String(夹) : 夹.toFixed(2).replace(/0+$/, '').replace(/\.$/, '');
+}
+
+/** 渲染成 A1111 认识的文本标签；没配或全空名时返回空串。 */
+export function 渲染LoRA标签(列表: readonly 角色LoRA条目[] | undefined): string {
+  return (列表 ?? [])
+    .map((项) => ({ 名称: (项?.名称 ?? '').trim(), 权重: 夹LoRA权重(项?.权重) }))
+    .filter((项) => 项.名称)
+    .map((项) => `<lora:${项.名称}:${LoRA权重文本(项.权重)}>`)
+    .join(', ');
+}
+
 export interface 角色卡 extends 角色部位字段 {
   id: string;
   enabled: boolean;
@@ -222,6 +298,8 @@ export interface 角色卡 extends 角色部位字段 {
    * 可选：早期版本创建的角色卡没有这个字段，归一化时补默认空组。
    */
   参考组?: 角色参考组;
+  /** 绑定的 LoRA（可选，旧角色卡没有）。 */
+  LoRA?: 角色LoRA条目[];
   /** 归一化后的角色位置（原插件由 `centersToCoordinates` 从提示词文本解析）。 */
   位置: 角色位置 | null;
   createdAt: number;
@@ -434,6 +512,9 @@ export const 内置注入模板: Record<string, 注入模板集> = {
       '服装列表：{outfits}',
       '角色图片：[{imageId}] {imageDesc}',
       '角色音频：[{audioId}] {audioDesc}',
+      // 本应用新增的变量：SD 渠道把 `<lora:名称:权重>` 写进提示词即生效；
+      // ComfyUI 渠道不使用它（由工作流槽位占位符承接）。
+      'LoRA：{lora}',
     ].join('\n'),
     卡内服装: [
       '  中文名称：{nameCN}',

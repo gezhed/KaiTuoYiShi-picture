@@ -104,3 +104,20 @@ python main.py --enable-cors-header
 
 导入后可以逐条改、启停、上下移，也可以随时「导出当前预设」备份或分享给别人。
 预设为空时界面会提示——**没有格式约束时，一键生成多半拿不到 `<人物>` 块**。
+
+## 六、按角色固定形象：LoRA 与参考图
+
+「角色管理 → 角色卡」新增 **LoRA** 一栏（先在「文生图 → ComfyUI → 连接」点
+**读取模型列表**，下拉里就有 LoRA 文件名）。绑定后**只有该角色出场时**才生效。
+
+**ComfyUI**：工作流里串最多 4 个 `LoraLoader`，第 N 个写
+`"lora_name": "%lora_name_N%"`、`"strength_model"` 与 `"strength_clip"` 写 `"%lora_weight_N%"`，
+再把 KSampler 的 `model`、CLIPTextEncode 的 `clip` 指到最后一环。
+**没填的槽会自动跳过**（下游接到上游），所以不用为空槽另做工作流。
+完整示例与排错见 [`docs/文生图-实机验证清单.md` 第 6.7 节](../docs/文生图-实机验证清单.md)。
+
+**SD / A1111**：不用改工作流，把 `{lora}` 写进「注入模板 → 角色列表」即可。
+
+**参考图（不想用 LoRA 时的另一条路）**：总览打开「参考图上传」，给角色卡放一张图
+（用途标「参考」），工作流里用 `%comfyuicankaotupian%`（IPAdapter / LoadImage）——
+这条链路按角色自动挑图，对「部分角色不像」往往比 LoRA 更省事。
