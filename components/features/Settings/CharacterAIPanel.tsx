@@ -150,13 +150,16 @@ export function CharacterAIPanel({
     set生成中(true);
     try {
       const 生成结果 = await 请求生成({ 系统: 设置, 要求, 角色: 目标角色 });
+      // 容错：`服装` 不是数组时（异常返回/旧版本）不能让整段流程抛错 ——
+      // 抛出去的话「字段照样显示、服装却静默没了」，现象与「服装保存不了」一样。
+      const 服装草稿 = Array.isArray(生成结果.服装) ? 生成结果.服装 : [];
       set结果(生成结果);
       const 字段键 = 角色部位字段名.filter((键) => (生成结果.字段[键] ?? '').trim().length > 0);
       set勾选字段(new Set(字段键));
-      set勾选服装(new Set(生成结果.服装.map((_, 序号) => 序号)));
+      set勾选服装(new Set(服装草稿.map((_, 序号) => 序号)));
       // 每轮生成都重置草稿：上一轮的改动不该悄悄带到这一次。
       set字段草稿({});
-      set服装草稿列表(生成结果.服装);
+      set服装草稿列表(服装草稿);
       // 新建模式：默认拿模型给的中文名当卡名，省得再敲一遍。
       if (新建模式) set新卡名称((值) => 值.trim() || (生成结果.字段.nameCN ?? '').trim());
       if (字段键.length === 0) {
@@ -167,7 +170,11 @@ export function CharacterAIPanel({
           ?? '模型没有给出可解析的 <人物> 区块，下面附上它的原始回复。');
       } else if (生成结果.重试次数 > 0) {
         set错误('');
-        set提示(`第 ${生成结果.重试次数 + 1} 次尝试才拿到可用内容（空回已自动重问）。`)
+        set提示(`第 ${生成结果.重试次数 + 1} 次尝试才拿到可用内容（空回已自动重问）。`);
+      } else if (服装草稿.length === 0) {
+        set提示(`拿到 ${字段键.length} 个部位字段；模型这次没有给出 <服装> 区块，所以没有服装可写。`);
+      } else {
+        set提示(`拿到 ${字段键.length} 个部位字段、${服装草稿.length} 件服装（都可以先改再写）。`);
       }
     } catch (异常) {
       set错误(异常 instanceof Error ? 异常.message : String(异常));
@@ -191,6 +198,10 @@ export function CharacterAIPanel({
         下一 = { ...下一, outfits: [...下一.outfits, ...新服装], updatedAt: Date.now() };
       }
     }
+    const 写入字段数 = [...勾选字段].filter((键) => (生效字段[键] ?? '').trim().length > 0).length;
+    const 写入服装数 = 追加服装
+      ? 服装草稿列表.filter((_, 序号) => 勾选服装.has(序号)).length
+      : 0;
     if (新建模式) {
       // 上层还会把这张卡挂进当前启用列表，否则它在提示词里不可见。
       if (新建角色) 新建角色(下一);
@@ -201,6 +212,14 @@ export function CharacterAIPanel({
     } else {
       写入角色(下一);
     }
+    // 回执：以前点完就静默关掉，用户只能靠翻角色卡猜「服装到底写进去没有」。
+    set错误('');
+    set提示(`已写入 ${写入字段数} 个部位字段`
+      + (写入服装数 > 0 ? `、${写入服装数} 件服装` : '')
+      + `（${下一.nameCN || '未命名'}）。`
+      + (追加服装 && 服装草稿列表.length > 写入服装数
+        ? `另有 ${服装草稿列表.length - 写入服装数} 件未勾选，没有写入。`
+        : ''));
     set结果(null);
     set要求('');
     set字段草稿({});
@@ -424,7 +443,7 @@ export function CharacterAIPanel({
               <div className="space-y-2">
                 <开关行
                   label="同时写入生成的服装"
-                  desc="模型给出了 <服装> 区块；关掉则只写角色字段。每一项都能当场改。"
+                  desc={`模型给出了 <服装> 区块；关掉则只写角色字段。每一项都能当场改。当前会写入 ${勾选服装.size} / ${服装草稿列表.length} 件（取消勾选的不写）。`}
                   checked={追加服装}
                   onChange={set追加服装}
                 />
@@ -436,9 +455,16 @@ export function CharacterAIPanel({
                         className="space-y-1 px-2 py-1.5"
                         style={{ border: '1px solid rgba(var(--tj-accent-primary), var(--tj-edge-tint-weak))' }}
                       >
-                        <label className="flex cursor-pointer items-center gap-2 text-[11px]">
+                        {/*
+                          这里**不能**用 <label> 把输入框一起包进来：label 会把点击
+                          （包括点在输入框旁边的空白上）转发给复选框，用户编辑服装名时
+                          很容易顺手把它取消勾选 —— 于是「身体字段写了、服装没写」，
+                          而且界面上看不出发生了什么。
+                        */}
+                        <div className="flex items-center gap-2 text-[11px]">
                           <input
                             type="checkbox"
+                            aria-label={`写入第 ${序号 + 1} 件服装`}
                             checked={勾选服装.has(序号)}
                             onChange={() => {
                               const 下一 = new Set(勾选服装);
@@ -458,7 +484,7 @@ export function CharacterAIPanel({
                             placeholder="英文名称"
                             onChange={(事件) => 改服装(序号, '英文名称', 事件.target.value)}
                           />
-                        </label>
+                        </div>
                         {([
                           ['上半身', '上半身'],
                           ['上半身背面', '上半身背面'],

@@ -291,6 +291,49 @@ describe('角色管理面板', () => {
     });
   });
 
+  it('生成结果里的服装：可逐项改、可取消勾选，写入后有回执', async () => {
+    const 捕获: { 系统?: 文生图系统设置 } = {};
+    const 请求生成 = vi.fn(async (): Promise<生成角色特征结果> => ({
+      字段: { characterTraits: 'pink hair（粉色头发）', facialFeatures: 'purple eyes（紫色眼睛）' },
+      服装: [
+        { name: '皇家礼服', 英文名称: 'regal gown', 归属人: '', 上半身: 'regal gown（华丽长裙）', 上半身背面: '', 下半身: '', 下半身背面: '', 全身: '', 负面: '' },
+        { name: '休闲装', 英文名称: 'casual', 归属人: '', 上半身: 'casual top（休闲上衣）', 上半身背面: '', 下半身: '', 下半身背面: '', 全身: '', 负面: '' },
+      ],
+      未识别: [],
+      原始回复: '<人物>…</人物>',
+      重试次数: 0,
+    }));
+    render(<TestShell 初始={建系统()} 请求生成={请求生成} on系统={(系统) => { 捕获.系统 = 系统; }} />);
+    fireEvent.click(screen.getByRole('button', { name: /生成/ }));
+    fireEvent.change(await screen.findByPlaceholderText(/流萤，星核猎手少女/), { target: { value: '流萤' } });
+    fireEvent.click(screen.getByText('一键生成'));
+    await screen.findByDisplayValue('pink hair（粉色头发）');
+
+    // 两件都在，且默认全勾（汇总写在开关说明里）。
+    expect(screen.getByText(/当前会写入 2 \/ 2 件/)).toBeInTheDocument();
+
+    // 改第一件的名字与上半身内容。
+    fireEvent.change(screen.getByDisplayValue('皇家礼服'), { target: { value: '深蓝礼服' } });
+    fireEvent.change(screen.getByDisplayValue('regal gown（华丽长裙）'), { target: { value: 'deep blue gown（深蓝礼服）' } });
+
+    // 取消第二件：点它旁边的输入框**不会**连带取消勾选（以前用 <label> 包住输入框会）。
+    fireEvent.click(screen.getByDisplayValue('casual top（休闲上衣）'));
+    expect(screen.getByRole('checkbox', { name: '写入第 2 件服装' })).toBeChecked();
+    fireEvent.click(screen.getByRole('checkbox', { name: '写入第 2 件服装' }));
+    expect(screen.getByText(/当前会写入 1 \/ 2 件/)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByText('写入角色卡'));
+    await waitFor(() => {
+      expect(捕获.系统?.角色卡.char_1.outfits).toHaveLength(1);
+    });
+    const 新衣 = 捕获.系统?.角色卡.char_1.outfits[0];
+    expect(新衣?.name).toBe('深蓝礼服');
+    expect(新衣?.上半身).toBe('deep blue gown（深蓝礼服）');
+    // 回执写清写了几个字段、几件服装。
+    expect(await screen.findByText(/已写入 2 个部位字段、1 件服装/)).toBeInTheDocument();
+    expect(screen.getByText(/另有 1 件未勾选/)).toBeInTheDocument();
+  });
+
   it('生成页签的预设默认空白，并提示去导入', async () => {
     render(<TestShell 初始={建系统()} />);
     fireEvent.click(screen.getByRole('button', { name: /生成/ }));
