@@ -1,4 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
+import { Trash2 } from 'lucide-react';
+import { IconButton } from '@/components/ui/IconButton';
 import type { 角色卡, 服装条目 } from '@/models/genSystem';
 import { 创建空角色部位字段, 角色部位字段名, 建LoRA条目, 夹LoRA权重, LoRA槽位数, type 角色LoRA条目 } from '@/models/genSystem';
 import { 追加标签串 } from '@/services/vocabulary/vocabulary';
@@ -167,6 +169,7 @@ export function CharacterSettingsEditor({
   on参考模式变更,
   NovelAI模型,
   LoRA列表,
+  on拉取LoRA,
 }: {
   角色: 角色卡;
   onChange: (next: 角色卡) => void;
@@ -186,9 +189,29 @@ export function CharacterSettingsEditor({
   NovelAI模型?: string;
   /** 服务器上的 LoRA 列表（「读取模型列表」得到），供下拉选择；空则手填。 */
   LoRA列表?: string[];
+  /** 重新拉取 LoRA 列表（在角色页直接点）。 */
+  on拉取LoRA?: () => Promise<string[]>;
 }) {
   const [展开段, set展开段] = useState<string>('身份');
   const [提示, set提示] = useState('');
+  /** 这些行改成手填（列表里没有/还没拉取列表时用）。 */
+  const [手填行, set手填行] = useState<Set<string>>(new Set());
+  const [拉取中, set拉取中] = useState(false);
+
+  const 处理拉取LoRA = async () => {
+    if (!on拉取LoRA) return;
+    set拉取中(true);
+    try {
+      const 列表 = await on拉取LoRA();
+      set提示(列表.length > 0
+        ? `已读取 ${列表.length} 个 LoRA，点名称输入框即可从列表里挑。`
+        : '服务器上没有返回任何 LoRA（确认文件放在 ComfyUI/models/loras 下）。');
+    } catch (错误) {
+      set提示(`读取 LoRA 列表失败：${错误 instanceof Error ? 错误.message : String(错误)}`);
+    } finally {
+      set拉取中(false);
+    }
+  };
 
   /** 改一条 LoRA（权重在这里就夹好，避免存进负值/超大值）。 */
   const 补丁LoRA = (id: string, 部分: Partial<角色LoRA条目>) => {
@@ -270,35 +293,65 @@ export function CharacterSettingsEditor({
         title={`LoRA（${(角色.LoRA ?? []).filter((项) => 项.名称.trim()).length} 个）`}
         desc="绑定后这条 LoRA 只在**该角色出场**时生效。ComfyUI 需要工作流里有槽位占位符（见下方说明）；SD / A1111 渠道把 {lora} 写进注入模板即可。"
       >
+        <div className="flex flex-wrap items-center gap-2">
+          <次级按钮 disabled={!on拉取LoRA || 拉取中} onClick={() => void 处理拉取LoRA()}>
+            {拉取中 ? '读取中…' : '拉取 LoRA 列表'}
+          </次级按钮>
+          <span className="text-[11px]" style={{ color: 'rgba(var(--tj-text-secondary), 0.68)' }}>
+            {LoRA列表 && LoRA列表.length > 0
+              ? `已读取 ${LoRA列表.length} 个：名称输入框里可以直接挑（和选底模一样）。`
+              : '还没读到列表：点左边的按钮从 ComfyUI 拉一次（等价于「连接」页的「读取模型列表」）。'}
+          </span>
+        </div>
         {(角色.LoRA ?? []).length === 0 ? (
           <提示条
             kind="info"
-            text="还没有绑定 LoRA。点「新增」填服务器上的文件名（如 krea.safetensors），或先在「文生图 → ComfyUI → 连接」点「读取模型列表」把 LoRA 列出来。"
+            text="还没有绑定 LoRA。点「新增」，然后从下拉里挑一个；列表里没有就切「手填」。"
           />
         ) : null}
         <div className="space-y-2">
           {(角色.LoRA ?? []).map((条目, 序号) => (
             <div key={条目.id} className="flex flex-wrap items-end gap-2">
-              <字段 label={`LoRA ${序号 + 1}`}>
-                {LoRA列表 && LoRA列表.length > 0 ? (
-                  <select
-                    aria-label={`LoRA ${序号 + 1} 名称`}
-                    className="kaituo-input w-72 px-2 py-1 text-xs"
-                    value={条目.名称}
-                    onChange={(事件) => 补丁LoRA(条目.id, { 名称: 事件.target.value })}
-                  >
-                    <option value="">（选择 LoRA）</option>
-                    {LoRA列表.map((名) => <option key={名} value={名}>{名}</option>)}
-                  </select>
-                ) : (
-                  <input
-                    aria-label={`LoRA ${序号 + 1} 名称`}
-                    className="kaituo-input w-72 px-2 py-1 font-mono text-xs"
-                    value={条目.名称}
-                    placeholder="krea.safetensors"
-                    onChange={(事件) => 补丁LoRA(条目.id, { 名称: 事件.target.value })}
-                  />
-                )}
+              <字段
+                label={`LoRA ${序号 + 1}`}
+                hint={手填行.has(条目.id) ? '手填：写完请到「自检」核对名字是否存在。' : undefined}
+              >
+                <div className="flex items-center gap-1">
+                  {LoRA列表 && LoRA列表.length > 0 && !手填行.has(条目.id) ? (
+                    <select
+                      aria-label={`LoRA ${序号 + 1} 名称`}
+                      className="kaituo-input w-72 px-2 py-1 text-xs"
+                      value={条目.名称}
+                      onChange={(事件) => 补丁LoRA(条目.id, { 名称: 事件.target.value })}
+                    >
+                      <option value="">（选择 LoRA）</option>
+                      {LoRA列表.map((名) => <option key={名} value={名}>{名}</option>)}
+                      {/* 存着的名字不在列表里（改名/换机器/列表没刷新）也要能看见，别让它显示成空。 */}
+                      {条目.名称 && !LoRA列表.includes(条目.名称) ? (
+                        <option value={条目.名称}>{条目.名称}（不在当前列表里）</option>
+                      ) : null}
+                    </select>
+                  ) : (
+                    <input
+                      aria-label={`LoRA ${序号 + 1} 名称`}
+                      className="kaituo-input w-72 px-2 py-1 font-mono text-xs"
+                      value={条目.名称}
+                      placeholder="krea.safetensors"
+                      onChange={(事件) => 补丁LoRA(条目.id, { 名称: 事件.target.value })}
+                    />
+                  )}
+                  {LoRA列表 && LoRA列表.length > 0 ? (
+                    <次级按钮
+                      onClick={() => {
+                        const 下一 = new Set(手填行);
+                        if (下一.has(条目.id)) 下一.delete(条目.id); else 下一.add(条目.id);
+                        set手填行(下一);
+                      }}
+                    >
+                      {手填行.has(条目.id) ? '用列表选' : '手填'}
+                    </次级按钮>
+                  ) : null}
+                </div>
               </字段>
               <字段 label="权重">
                 <input
@@ -311,13 +364,14 @@ export function CharacterSettingsEditor({
                   onChange={(事件) => 补丁LoRA(条目.id, { 权重: Number(事件.target.value) })}
                 />
               </字段>
-              <次级按钮
-                onClick={() => 补丁({
-                  LoRA: (角色.LoRA ?? []).filter((项) => 项.id !== 条目.id),
-                })}
-              >
-                删除
-              </次级按钮>
+              {/* 用图标按钮：一行里既有「权重」又有删除，文字按钮会挤；图标带无障碍名称，测试与读屏都能定位。 */}
+              <IconButton
+                size="sm"
+                icon={Trash2}
+                label={`删除 LoRA ${序号 + 1}`}
+                description="只从这张角色卡上移除这条绑定"
+                onClick={() => 补丁({ LoRA: (角色.LoRA ?? []).filter((项) => 项.id !== 条目.id) })}
+              />
             </div>
           ))}
         </div>

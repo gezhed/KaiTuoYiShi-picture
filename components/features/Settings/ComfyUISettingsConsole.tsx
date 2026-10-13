@@ -204,7 +204,12 @@ export function ComfyUISettingsConsole({
     try {
       const 结果 = await onFetchResources(档案?.连接.地址 ?? '');
       set资源(结果);
-      set测试提示({ kind: 'ok', text: `已读取：模型 ${结果.模型.length}、采样器 ${结果.采样器.length}、VAE ${结果.vae.length}。` });
+      set测试提示({
+        kind: 'ok',
+        text: `已读取：模型 ${结果.模型.length}、采样器 ${结果.采样器.length}、`
+          + `LoRA ${结果.lora.length}、VAE ${结果.vae.length}。`
+          + (结果.lora.length > 0 ? '角色卡里可以直接从下拉里挑 LoRA。' : ''),
+      });
     } catch (错误) {
       set测试提示({ kind: 'error', text: `读取失败：${错误 instanceof Error ? 错误.message : String(错误)}` });
     } finally {
@@ -1078,6 +1083,12 @@ export function ComfyUISettingsConsole({
           主API地址={主API地址}
           onFetchModels={onFetchModels}
           LoRA列表={资源?.lora ?? []}
+          on拉取LoRA={async () => {
+            // 角色卡编辑页里也能拉：省得为了挑一个 LoRA 来回切页签。
+            const 结果 = await onFetchResources(档案?.连接.地址 ?? '');
+            set资源(结果);
+            return 结果.lora;
+          }}
         />
       )}
 

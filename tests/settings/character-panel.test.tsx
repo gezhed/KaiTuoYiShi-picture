@@ -59,10 +59,14 @@ function TestShell({
   初始,
   请求生成,
   on系统,
+  LoRA列表,
+  on拉取LoRA,
 }: {
   初始: 文生图系统设置;
   请求生成?: (参数: { 系统: 文生图系统设置; 要求: string; 角色?: 角色卡 }) => Promise<生成角色特征结果>;
   on系统?: (系统: 文生图系统设置) => void;
+  LoRA列表?: string[];
+  on拉取LoRA?: () => Promise<string[]>;
 }) {
   const [系统, set系统] = useState(初始);
   return (
@@ -74,6 +78,8 @@ function TestShell({
         return 下一;
       })}
       请求生成={请求生成}
+      LoRA列表={LoRA列表}
+      on拉取LoRA={on拉取LoRA}
     />
   );
 }
@@ -206,13 +212,54 @@ describe('角色管理面板', () => {
       expect(捕获.系统?.角色卡.char_1.LoRA?.[0]).toMatchObject({ 名称: 'krea.safetensors', 权重: 0.75 });
     });
 
-    // 「删除」在页面上不止一个（角色卡本身也有），只点 LoRA 行里那个。
-    const LoRA行 = screen.getByLabelText('LoRA 1 名称').closest('div')?.parentElement;
-    fireEvent.click(LoRA行!.querySelector('button')!);
+    fireEvent.click(screen.getByRole('button', { name: '删除 LoRA 1' }));
     await waitFor(() => {
       expect(捕获.系统?.角色卡.char_1.LoRA ?? []).toHaveLength(0);
     });
     壳.unmount();
+  });
+
+  it('拉到 LoRA 列表后，名称变成和底模一样的选择框（也能切回手填）', async () => {
+    const 拉取 = vi.fn(async () => ['krea.safetensors', 'detail.safetensors']);
+    render(
+      <TestShell
+        初始={建系统()}
+        LoRA列表={['krea.safetensors', 'detail.safetensors']}
+        on拉取LoRA={拉取}
+      />,
+    );
+    fireEvent.click(await screen.findByRole('button', { name: /流萤/ }));
+    fireEvent.click(screen.getByRole('button', { name: '新增' }));
+
+    // 列表已在手上 → 下拉（combobox），选项就是服务器上的 LoRA。
+    const 下拉 = await screen.findByRole('combobox', { name: 'LoRA 1 名称' });
+    expect(Array.from((下拉 as HTMLSelectElement).options).map((项) => 项.value))
+      .toEqual(['', 'krea.safetensors', 'detail.safetensors']);
+
+    // 「拉取 LoRA 列表」按钮会调回调（等价于连接页的「读取模型列表」）。
+    fireEvent.click(screen.getByRole('button', { name: '拉取 LoRA 列表' }));
+    await waitFor(() => {
+      expect(拉取).toHaveBeenCalled();
+    });
+    expect(await screen.findByText(/已读取 2 个 LoRA/)).toBeInTheDocument();
+
+    // 切「手填」→ 变成文本框，列表里没有的名字也能写。
+    fireEvent.click(screen.getByRole('button', { name: '手填' }));
+    const 输入 = screen.getByLabelText('LoRA 1 名称');
+    expect(输入.tagName).toBe('INPUT');
+    expect((输入 as HTMLInputElement).type).toBe('text');
+  });
+
+  it('存着的名字不在列表里时，选项里仍然显示它（不会看起来被清空）', async () => {
+    const 系统 = 建系统();
+    系统.角色卡.char_1 = 建角色({ LoRA: [{ id: 'l1', 名称: '旧的.safetensors', 权重: 0.5 }] });
+    render(<TestShell 初始={系统} LoRA列表={['krea.safetensors']} />);
+    fireEvent.click(await screen.findByRole('button', { name: /流萤/ }));
+
+    const 下拉 = await screen.findByRole('combobox', { name: 'LoRA 1 名称' }) as HTMLSelectElement;
+    expect(下拉.value).toBe('旧的.safetensors');
+    expect(Array.from(下拉.options).map((项) => 项.value)).toContain('旧的.safetensors');
+    expect(Array.from(下拉.options).some((项) => 项.textContent?.includes('不在当前列表里'))).toBe(true);
   });
 
   it('角色卡页给出可复制的标签（含服装与只出镜写法）', async () => {
