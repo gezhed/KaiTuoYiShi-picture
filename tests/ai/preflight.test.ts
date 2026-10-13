@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { 运行自检 } from '@/services/ai/imageGen/preflight';
+import { 运行自检, 检查工作流连线 } from '@/services/ai/imageGen/preflight';
+import { 规范化LoRA名称 } from '@/services/ai/imageGen/comfyEngine';
 import { 创建默认文生图系统设置, 创建空角色部位字段, 建LoRA条目 } from '@/models/genSystem';
 import type { 文生图系统设置 } from '@/models/genSystem';
 
@@ -568,5 +569,35 @@ describe('运行自检：SD 与 Banana', () => {
   it('Banana 说明自己不支持负面词与种子', () => {
     const 结果 = 运行自检(建设置((项) => { 项.启用 = true; 项.渠道 = 'banana'; 项.banana.APIKey = 'k'; }));
     expect(标题列表(结果)).toContain('Banana 不支持负面提示词与种子');
+  });
+
+  describe('检查工作流连线与 LoRA 路径规范化', () => {
+    it('CLIPTextEncode 的 clip 接到 LoraLoader 的输出槽 0（MODEL）时报错', () => {
+      const 错线工作流 = {
+        20: { class_type: 'LoraLoader', inputs: { model: ['4', 0], clip: ['4', 1] } },
+        6: { class_type: 'CLIPTextEncode', inputs: { text: '%prompt%', clip: ['20', 0] } },
+      };
+      const 项 = 检查工作流连线(错线工作流);
+      expect(项.some((e) => e.标题.includes('clip 连线槽位接错') && e.说明.includes('槽 0 是 MODEL'))).toBe(true);
+    });
+
+    it('KSampler 的 model 接到输出槽 1（CLIP）时报错', () => {
+      const 错线工作流 = {
+        20: { class_type: 'LoraLoader', inputs: { model: ['4', 0], clip: ['4', 1] } },
+        3: { class_type: 'KSampler', inputs: { model: ['20', 1] } },
+      };
+      const 项 = 检查工作流连线(错线工作流);
+      expect(项.some((e) => e.标题.includes('model 连线槽位接错'))).toBe(true);
+    });
+
+    it('规范化LoRA名称：正斜杠转反斜杠，且自动匹配子目录前缀', () => {
+      const 候选 = ['star reil\\srcocolia_pony.safetensors', 'handfix.safetensors'];
+      // 正斜杠风格匹配
+      expect(规范化LoRA名称('star reil/srcocolia_pony.safetensors', 候选)).toBe('star reil\\srcocolia_pony.safetensors');
+      // 纯文件名自动补全子目录
+      expect(规范化LoRA名称('srcocolia_pony.safetensors', 候选)).toBe('star reil\\srcocolia_pony.safetensors');
+      // 无列表时至少转反斜杠
+      expect(规范化LoRA名称('folder/test.safetensors')).toBe('folder\\test.safetensors');
+    });
   });
 });

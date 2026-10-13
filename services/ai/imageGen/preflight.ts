@@ -11,7 +11,7 @@
 
 import { LoRA槽位数 } from '@/models/genSystem';
 import type { 文生图系统设置, 生图渠道 } from '@/models/genSystem';
-import { 未选择模型 } from './comfyEngine';
+import { 未选择模型, 规范化LoRA名称 } from './comfyEngine';
 import type { Comfy可选资源 } from './comfyClient';
 import { 是ComfyUI界面格式, 是ComfyUI接口格式 } from './types';
 import { 扫描剩余占位符, 占位符表 } from './workflowTokens';
@@ -390,6 +390,67 @@ function 检查ComfyUI(设置: 文生图系统设置, 资源?: Comfy可选资源
 
   项.push(...检查角色LoRA槽位(设置, 工作流, 资源));
   项.push(...检查设置资源(设置, 资源));
+  if (可解析) 项.push(...检查工作流连线(解析结果));
+
+  return 项;
+}
+
+/**
+ * 校验关键节点的连线槽位，防止 ComfyUI 经典的
+ * 「Return type mismatch between linked nodes: clip, received_type(MODEL) mismatch input_type(CLIP)」。
+ */
+export function 检查工作流连线(工作流: unknown): 检查项[] {
+  if (!工作流 || typeof 工作流 !== 'object') return [];
+  const 节点表 = 工作流 as Record<string, { class_type?: string; inputs?: Record<string, unknown> }>;
+  const 项: 检查项[] = [];
+
+  for (const [id, 节点] of Object.entries(节点表)) {
+    if (!节点 || typeof 节点 !== 'object') continue;
+    const inputs = 节点.inputs;
+    if (!inputs || typeof inputs !== 'object') continue;
+
+    // 检查 1：CLIPTextEncode 的 clip 输入必须接 CLIP 槽（槽位 1），不能接 MODEL 槽（槽位 0）
+    if (节点.class_type === 'CLIPTextEncode') {
+      const clip = inputs.clip;
+      if (Array.isArray(clip) && typeof clip[0] === 'string' && typeof clip[1] === 'number') {
+        const 上游 = 节点表[clip[0]];
+        if (上游?.class_type === 'LoraLoader' && clip[1] === 0) {
+          项.push({
+            级别: 'error',
+            标题: `节点 #${id} (CLIPTextEncode) 的 clip 连线槽位接错`,
+            说明: `clip 输入连接到了节点 #${clip[0]} (LoraLoader) 的输出槽 0（MODEL）。`
+              + `LoraLoader 的槽 0 是 MODEL，槽 1 才是 CLIP。`
+              + `请将该节点的 clip 改为 ["${clip[0]}", 1]，否则 ComfyUI 会报「Return type mismatch between linked nodes」。`,
+          });
+        } else if (上游?.class_type === 'CheckpointLoaderSimple' && clip[1] === 0) {
+          项.push({
+            级别: 'error',
+            标题: `节点 #${id} (CLIPTextEncode) 的 clip 连线槽位接错`,
+            说明: `clip 输入连接到了节点 #${clip[0]} (CheckpointLoaderSimple) 的输出槽 0（MODEL）。`
+              + `Checkpoint 的槽 0 是 MODEL，槽 1 才是 CLIP。`
+              + `请将该节点的 clip 改为 ["${clip[0]}", 1]，否则 ComfyUI 会报「Return type mismatch between linked nodes」。`,
+          });
+        }
+      }
+    }
+
+    // 检查 2：KSampler 的 model 输入必须接 MODEL 槽（槽位 0）
+    if (节点.class_type === 'KSampler') {
+      const model = inputs.model;
+      if (Array.isArray(model) && typeof model[0] === 'string' && typeof model[1] === 'number') {
+        const 上游 = 节点表[model[0]];
+        if ((上游?.class_type === 'LoraLoader' || 上游?.class_type === 'CheckpointLoaderSimple') && model[1] !== 0) {
+          项.push({
+            级别: 'error',
+            标题: `节点 #${id} (KSampler) 的 model 连线槽位接错`,
+            说明: `model 输入连接到了节点 #${model[0]} (${上游.class_type}) 的输出槽 ${model[1]}。`
+              + `模型的输出槽必须是 0。`
+              + `请将该节点的 model 改为 ["${model[0]}", 0]，否则 ComfyUI 会报「Return type mismatch between linked nodes」。`,
+          });
+        }
+      }
+    }
+  }
 
   return 项;
 }
@@ -445,7 +506,7 @@ function 检查角色LoRA槽位(
   const 可用LoRA = 资源?.lora ?? [];
   if (可用LoRA.length > 0) {
     const 缺失 = [...new Map(超出
-      .filter((条) => !可用LoRA.includes(条.名称))
+      .filter((条) => !可用LoRA.includes(规范化LoRA名称(条.名称, 可用LoRA)))
       .map((条) => [`${条.角色}|${条.名称}`, 条])).values()];
     if (缺失.length > 0) {
       项.push({
@@ -453,7 +514,8 @@ function 检查角色LoRA槽位(
         标题: `角色绑定的 LoRA 在 ComfyUI 上不存在：${缺失.map((条) => 条.名称).join('、')}`,
         说明: 缺失.map((条) => `「${条.角色}」的 ${条.名称}`).join('；')
           + '。绑定这些 LoRA 的角色出场时，ComfyUI 会以「Value not in list」拒绝本次提交。'
-          + `可用的 LoRA：${可用LoRA.slice(0, 5).join('、')}${可用LoRA.length > 5 ? ` 等 ${可用LoRA.length} 个` : ''}。`,
+          + `可用的 LoRA：${可用LoRA.slice(0, 5).join('、')}${可用LoRA.length > 5 ? ` 等 ${可用LoRA.length} 个` : ''}。`
+          + '如果 LoRA 在子目录下，请填写完整相对路径（如 "star reil\\xxx.safetensors"）。',
       });
     }
   }

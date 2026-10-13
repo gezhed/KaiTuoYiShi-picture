@@ -87,6 +87,40 @@ export function 规范化反斜杠路径(值: string): string {
   return 值.replace(/\\{2,}/g, '\\');
 }
 
+/**
+ * 规范化 LoRA 路径名称，对齐 ComfyUI 内部对文件名的严格字符串比对：
+ * 1. Windows 上 ComfyUI 的子目录统一使用反斜杠 `\`。
+ * 2. 如果提供了可用资源列表（例如来自 object_info 或连接时拉取的列表），
+ *    自动处理正反斜杠互转、大小写以及纯文件名（缺失子目录前缀）补齐。
+ */
+export function 规范化LoRA名称(
+  名称: string,
+  可用列表?: string[],
+): string {
+  const 裁剪 = 名称.trim();
+  if (!裁剪) return '';
+  if (!可用列表 || 可用列表.length === 0) {
+    return 裁剪.replace(/\//g, '\\');
+  }
+  // 1. 完全一致
+  if (可用列表.includes(裁剪)) return 裁剪;
+  // 2. 斜杠风格互转匹配（例如 star reil/xxx vs star reil\xxx）
+  const 统一反斜杠 = 裁剪.replace(/\//g, '\\');
+  const 统一正斜杠 = 裁剪.replace(/\\/g, '/');
+  const 匹配斜杠 = 可用列表.find((项) => 项 === 统一反斜杠 || 项 === 统一正斜杠);
+  if (匹配斜杠) return 匹配斜杠;
+  // 3. 忽略大小写匹配
+  const 匹配大小写 = 可用列表.find((项) => 项.toLowerCase() === 统一反斜杠.toLowerCase() || 项.toLowerCase() === 统一正斜杠.toLowerCase());
+  if (匹配大小写) return 匹配大小写;
+  // 4. 仅输入了纯文件名，自动匹配子目录（例如输入 Cocolia_Hi3+HSR_IL-01.safetensors 自动匹配 star reil\Cocolia_Hi3+HSR_IL-01.safetensors）
+  const 纯文件名 = 裁剪.split(/[/\\]/).pop()?.toLowerCase();
+  if (纯文件名) {
+    const 候选 = 可用列表.filter((项) => (项.split(/[/\\]/).pop()?.toLowerCase() ?? '') === 纯文件名);
+    if (候选.length === 1) return 候选[0];
+  }
+  return 统一反斜杠;
+}
+
 function 取模型名(参数: ComfyUI参数设置): string {
   const 原始 = 参数.模型.trim();
   if (!原始 || 原始 === 未选择模型) return '';
@@ -313,6 +347,12 @@ export async function 生成ComfyUI图片(
       throw new Error('ComfyUI 工作流为空。请在设置里导入 API 格式工作流。');
     }
 
+    const 可用LoRA列表 = (上下文.对象信息?.LoraLoader as { input?: { required?: { lora_name?: unknown[] } } } | undefined)
+      ?.input?.required?.lora_name?.[0];
+    const 可用LoRA = Array.isArray(可用LoRA列表)
+      ? 可用LoRA列表.filter((项): 项 is string => typeof 项 === 'string')
+      : undefined;
+
     // 取值先算好：LoRA 槽位既参与替换，也决定「哪些槽是空的、要跳过哪个节点」。
     const 取值 = {
       seed: 种子,
@@ -334,7 +374,10 @@ export async function 生成ComfyUI图片(
       ipaAtmosphereStrength: 参数.氛围强度,
       referenceImage: 参考图文件名,
       inpaintDenoise: 参数.重绘强度,
-      lora: 请求.lora,
+      lora: 请求.lora?.map((条) => ({
+        ...条,
+        名称: 规范化LoRA名称(条.名称, 可用LoRA),
+      })),
     };
 
     // 先做跳节点重映射，再做 token 替换：替换是纯文本的，重映射会改结构。
