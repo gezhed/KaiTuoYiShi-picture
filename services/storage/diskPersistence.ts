@@ -338,6 +338,7 @@ function readAllRows(db: IDBDatabase, store: LocalSaveStoreName): Promise<Record
     request.onerror = () => reject(toError(request.error));
   });
 }
+void readAllRows;
 
 async function fetchStorePage(
   store: LocalSaveStoreName,
@@ -418,20 +419,45 @@ async function syncFromDisk(diskDbVersion: number | null): Promise<number> {
   return restored;
 }
 
-/** 把 IDB 全部现有行重灌到磁盘：用于修补历史遗漏，确保磁盘与 IDB 首次对齐。 */
+/** 把某 store 的全部现有行重灌到磁盘：**用游标分批**，内存不随库大小增长。 */
+async function flushStoreFromIdb(db: IDBDatabase, store: LocalSaveStoreName): Promise<void> {
+  const keyPath = localSaveStoreKeyPath(store);
+  let 本批 = 0;
+  await new Promise<void>((resolve, reject) => {
+    const tx = db.transaction(store, 'readonly');
+    const 游标请求 = tx.objectStore(store).openCursor();
+    游标请求.onsuccess = () => {
+      const 游标 = 游标请求.result;
+      if (!游标) {
+        resolve();
+        return;
+      }
+      const map = ensureStoreMap(store);
+      if (map) {
+        map.set(keyToString(游标.key), {
+          type: 'put',
+          value: withKeyPath(游标.value, keyPath, 游标.key),
+          key: 游标.key,
+        });
+        本批 += 1;
+      }
+      if (本批 >= 24) {
+        // 先落盘再继续游标：待处理 ops 始终不超过一批。
+        本批 = 0;
+        void flush().then(() => 游标.continue());
+      } else {
+        游标.continue();
+      }
+    };
+    游标请求.onerror = () => reject(toError(游标请求.error));
+  });
+}
+
+/** 把 IDB 全部现有行重灌到磁盘（分 store、分页；用于修补历史遗漏）。 */
 async function flushAllFromIdb(): Promise<void> {
   const db = await openDB();
   for (const store of LOCAL_SAVE_STORE_NAMES) {
-    const rows = await readAllRows(db, store);
-    if (!rows.length) continue;
-    const map = ensureStoreMap(store);
-    if (!map) continue;
-    const keyPath = localSaveStoreKeyPath(store);
-    for (const row of rows) {
-      const rawKey = row[keyPath] as IDBValidKey | null | undefined;
-      if (rawKey === undefined || rawKey === null) continue;
-      map.set(keyToString(rawKey), { type: 'put', value: row, key: rawKey });
-    }
+    await flushStoreFromIdb(db, store);
   }
   await flush();
 }

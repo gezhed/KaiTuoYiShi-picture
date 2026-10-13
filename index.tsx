@@ -4,7 +4,6 @@ import { ErrorBoundary } from '@/components/ui/ErrorBoundary';
 import { App } from '@/App';
 import { bootPerfCommit, bootPerfStart } from '@/utils/bootPerf';
 import { bootstrapDiskPersistence } from '@/services/storage/diskPersistence';
-import { 安装跨设备同步检查 } from '@/services/localSave/crossDeviceSync';
 import '@/styles/tailwind.css';
 import '@/styles/root-theme.css';
 import '@/styles/global.css';
@@ -37,7 +36,6 @@ bootPerfStart();
 
 // 渲染前先接好本地落盘并在必要时从磁盘回灌，保证其后一切 IDB 读取都看到持久数据。
 void bootstrapDiskPersistence().finally(() => {
-  安装跨设备同步检查();
   ReactDOM.createRoot(rootEl).render(
     <React.StrictMode>
       <ErrorBoundary>
