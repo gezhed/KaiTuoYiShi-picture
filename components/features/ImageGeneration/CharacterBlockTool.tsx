@@ -58,6 +58,34 @@ export function 拼角色块(
   return '${' + `"name":"${名}", "angle":"${选项.角度}", "upperBody":"${上}", "lowerBody":"${下}"` + '}$';
 }
 
+/**
+ * 把块插进已有提示词，返回新文本与插入后该放光标的位置。
+ *
+ * `选区` 给 `null` 表示「输入框没聚焦」→ **追加到末尾**。
+ * 这点必须显式区分：textarea 未聚焦时 `selectionStart` 是 0，
+ * 照它插会把块塞到最前面，手写好的提示词看起来就被改乱了。
+ * 前后各补一个 `, `：块黏在别的 tag 上会被当成同一个词。
+ */
+export function 插入提示词块(
+  原文: string,
+  块: string,
+  选区: { 起: number; 止: number } | null,
+): { 文本: string; 光标: number } {
+  if (!选区) {
+    const 尾 = 原文.replace(/[,\s]+$/, '');
+    const 文本 = 尾 ? `${尾}, ${块}` : 块;
+    return { 文本, 光标: 文本.length };
+  }
+  const 起 = Math.max(0, Math.min(选区.起, 原文.length));
+  const 止 = Math.max(起, Math.min(选区.止, 原文.length));
+  const 前 = 原文.slice(0, 起);
+  const 后 = 原文.slice(止);
+  const 左 = 前.trim().length > 0 && !/[,\s(]$/.test(前) ? `${前}, ` : 前;
+  const 右 = 后.trim().length > 0 && !/^[,\s)]/.test(后) ? `, ${后}` : 后;
+  const 文本 = `${左}${块}${右}`;
+  return { 文本, 光标: 左.length + 块.length };
+}
+
 export function CharacterBlockTool({
   角色列表,
   on插入,

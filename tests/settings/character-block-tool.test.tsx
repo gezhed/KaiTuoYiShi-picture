@@ -9,7 +9,7 @@
 import { useState } from 'react';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
-import { CharacterBlockTool, 拼角色块 } from '@/components/features/ImageGeneration/CharacterBlockTool';
+import { CharacterBlockTool, 拼角色块, 插入提示词块 } from '@/components/features/ImageGeneration/CharacterBlockTool';
 import { 处理角色提示词 } from '@/services/ai/imageGen/characterPrompt';
 import { 创建空角色部位字段 } from '@/models/genSystem';
 import type { 角色卡 } from '@/models/genSystem';
@@ -118,6 +118,26 @@ describe('角色提示词小工具', () => {
     expect(on插入.mock.calls[0][0])
       .toBe('${"name":"流萤", "angle":"front view", "upperBody":"hidden", "lowerBody":"nsfw"}$');
     expect(screen.getByTestId('插入记录').textContent).toContain('"lowerBody":"nsfw"');
+  });
+
+  it('插入时不动手写的那部分：没聚焦就追加到末尾，聚焦了才按光标插', () => {
+    const 块 = '${"name":"流萤", "angle":"front view", "upperBody":"sfw", "lowerBody":"hidden"}$';
+
+    // 没聚焦（textarea 的 selectionStart 是 0，但那是「没点过」不是「光标在开头」）
+    expect(插入提示词块('1girl, solo, silver hair', 块, null))
+      .toEqual({ 文本: `1girl, solo, silver hair, ${块}`, 光标: `1girl, solo, silver hair, ${块}`.length });
+    // 末尾多余的逗号/空白先清掉，避免出现「, , 」
+    expect(插入提示词块('1girl, ', 块, null).文本).toBe(`1girl, ${块}`);
+    // 空提示词就只放块
+    expect(插入提示词块('', 块, null).文本).toBe(块);
+
+    // 聚焦在中间：按光标插，前后补分隔符
+    const 中间 = 插入提示词块('1girl, solo, upper body', 块, { 起: 7, 止: 7 });
+    expect(中间.文本).toBe(`1girl, ${块}, solo, upper body`);
+    expect(中间.光标).toBe(`1girl, ${块}`.length);
+    // 选中一段再插：选中的内容被替换掉
+    expect(插入提示词块('1girl, XXXX, upper body', 块, { 起: 7, 止: 11 }).文本)
+      .toBe(`1girl, ${块}, upper body`);
   });
 
   it('名字在角色卡里找不到时会先提醒（否则那段会原样留给模型）', async () => {

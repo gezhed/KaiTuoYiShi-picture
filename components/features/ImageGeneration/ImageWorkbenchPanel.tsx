@@ -11,7 +11,7 @@ import { 生成单张插图, 重写提示词标记 } from '@/services/ai/imageGe
 import type { 角色匹配上下文 } from '@/services/ai/imageGen/characterPrompt';
 import { 主按钮, 面板, 提示条, 次级按钮, 开关行, 页签条, 设置字段 as 字段 } from '@/components/features/Settings/settingsPrimitives';
 import { ImageLightbox, type 查看图片项 } from './ImageLightbox';
-import { CharacterBlockTool } from './CharacterBlockTool';
+import { CharacterBlockTool, 插入提示词块 } from './CharacterBlockTool';
 import { AvatarEditorDialog } from './AvatarWorkbench';
 import { SlotApplyDialog } from './SlotApplyDialog';
 import { GalleryWorkspace, type 图库条目选中 } from '@/components/features/GameSystems/album/GalleryWorkspace';
@@ -172,28 +172,27 @@ export function ImageWorkbenchPanel({
   /** 提示词输入框：小工具要把块插到光标处，所以得拿到它。 */
   const 提示词框 = useRef<HTMLTextAreaElement | null>(null);
 
-  /** 把变量块插到光标处（没聚焦过就追加到末尾，并补一个逗号分隔）。 */
+  /**
+   * 把变量块插进提示词。
+   *
+   * 注意「没点过输入框」和「光标在第 0 位」是两件事：textarea 未聚焦时
+   * `selectionStart` 是 **0**（不是 null），照它插会把块塞到**最前面**，
+   * 手动写好的提示词看上去就像被改乱了。所以只有输入框真的聚焦时才按光标插，
+   * 否则一律追加到末尾 —— 手写的那部分永远不动。
+   */
   const 插入角色块 = (块: string) => {
     const 元素 = 提示词框.current;
-    if (!元素) {
-      set提示词((旧) => (旧.trim() ? `${旧.replace(/[,\s]+$/, '')}, ${块}` : 块));
-      return;
+    const 聚焦中 = Boolean(元素) && document.activeElement === 元素;
+    const 选区 = 聚焦中 && 元素 ? { 起: 元素.selectionStart ?? 0, 止: 元素.selectionEnd ?? 0 } : null;
+    const 下一 = 插入提示词块(提示词, 块, 选区);
+    set提示词(下一.文本);
+    if (元素) {
+      // 光标落到块之后，方便接着选下一个角色。
+      requestAnimationFrame(() => {
+        元素.focus();
+        元素.setSelectionRange(下一.光标, 下一.光标);
+      });
     }
-    const 起 = 元素.selectionStart ?? 提示词.length;
-    const 止 = 元素.selectionEnd ?? 起;
-    const 前 = 提示词.slice(0, 起);
-    const 后 = 提示词.slice(止);
-    // 前后各补一个「, 」：块黏在别的 tag 上会被当成同一个词。
-    const 左 = 前.trim().length > 0 && !/[,\s(]$/.test(前) ? `${前}, ` : 前;
-    const 右 = 后.trim().length > 0 && !/^[,\s)]/.test(后) ? `, ${后}` : 后;
-    const 下一 = `${左}${块}${右}`;
-    set提示词(下一);
-    // 光标落到块之后，方便接着选下一个角色。
-    requestAnimationFrame(() => {
-      元素.focus();
-      const 位置 = 左.length + 块.length;
-      元素.setSelectionRange(位置, 位置);
-    });
   };
 
   const 处理出图 = async () => {
