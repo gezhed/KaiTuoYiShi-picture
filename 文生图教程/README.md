@@ -7,10 +7,13 @@
 
 | 文件 | 说明 |
 |---|---|
-| `工作流-修正版.json` | **用这个。** 占位符已换成本应用认识的 `%…%` 写法，粘贴进设置即可。 |
-| `工作流.json` | 原始版本，提示词位置写的是 `__PROMPT__` / `__NEGATIVE_PROMPT__`，本应用不识别，保留作对照。 |
+| `工作流.json` | **用这个。** 已经写成本应用认识的 `%…%` 占位符，并内置 4 个角色 LoRA 槽位；整段粘贴进「工作流」页即可。 |
 | `llm预设.json` | 社区作者的「正文 → 插图提示词」LLM 预设，在「文生图 → LLM 预设」里导入。 |
 | `角色AI预设-人物生成.json` | **一键生成角色特征**的提示词预设（破甲对话 + `<人物>`/`<服装>` 格式规格）。见下面第五节。 |
+
+> 这份工作流包含：`%prompt%` / `%negative_prompt%`（提示词必须的）、`%MODEL_NAME%`、
+> `%width%` / `%height%`、`%seed%` / `%steps%` / `%cfg_scale%` / `%sampler_name%` / `%scheduler%`，
+> 以及 4 个 `LoraLoader` 槽位（`%lora_name_1%`…，角色绑的 LoRA 按出场顺序填；没填的槽提交前自动跳过）。
 
 ## 一、先启动 ComfyUI
 
@@ -33,7 +36,7 @@ python main.py --enable-cors-header
 1. 设置 → 文生图 → **总览**：渠道选 `ComfyUI`，打开「启用文生图」。
 2. **ComfyUI** 页：地址填 `http://127.0.0.1:8188` → 点「测试连接」→
    成功后点「读取模型列表」，选一个 checkpoint。
-3. **工作流** 页：粘贴 `工作流-修正版.json` 的全部内容。
+3. **工作流** 页：粘贴 `工作流.json` 的全部内容。
 4. 设置 → 文生图 → **提示词**页点「自检」，红灯全部消掉。
 
 ## 四、占位符用法
@@ -110,11 +113,12 @@ python main.py --enable-cors-header
 「角色管理 → 角色卡」新增 **LoRA** 一栏（先在「文生图 → ComfyUI → 连接」点
 **读取模型列表**，下拉里就有 LoRA 文件名）。绑定后**只有该角色出场时**才生效。
 
-**ComfyUI**：工作流里串最多 4 个 `LoraLoader`，第 N 个写
-`"lora_name": "%lora_name_N%"`、`"strength_model"` 与 `"strength_clip"` 写 `"%lora_weight_N%"`，
-再把 KSampler 的 `model`、CLIPTextEncode 的 `clip` 指到最后一环。
-**没填的槽会自动跳过**（下游接到上游），所以不用为空槽另做工作流。
-完整示例与排错见 [`docs/文生图-实机验证清单.md` 第 6.7 节](../docs/文生图-实机验证清单.md)。
+**ComfyUI**：本教程的 `工作流.json` **已经内置这 4 个槽位**（节点 20–23，
+`"lora_name": "%lora_name_N%"`、`"strength_model"` 与 `"strength_clip"` 用 `"%lora_weight_N%"`），
+直接粘贴就能用。**没填的槽会自动跳过**（下游接到上游），所以不用为空槽另做工作流。
+若你要自己改工作流：串 4 个 `LoraLoader`，把 KSampler 的 `model`、
+CLIPTextEncode 的 `clip` 指到最后一环即可 —— 完整示例与排错见
+[`docs/文生图-实机验证清单.md` 第 6.7 节](../docs/文生图-实机验证清单.md)。
 
 **SD / A1111**：不用改工作流，把 `{lora}` 写进「注入模板 → 角色列表」即可。
 

@@ -338,8 +338,10 @@ function 检查ComfyUI(设置: 文生图系统设置, 资源?: Comfy可选资源
 
   // 占位符必须带引号——上一步的文本替换依赖这一点。
   const 剩余 = 扫描剩余占位符(工作流);
-  const 已知占位符 = new Set(Object.keys(占位符表));
-  const 未知 = 剩余.filter((项) => !已知占位符.has(项.replace(/^%|%$/g, '')));
+  // 注意：`Object.keys(占位符表)` 得到的是数组下标，用它比对会把**每一个**已知 token
+  // 都判成「不认识」（曾经就是这样，于是任何工作流都会收到一条 18 项的黄灯）。
+  const 已知占位符 = new Set(占位符表.map((项) => 项.占位符));
+  const 未知 = 剩余.filter((项) => !已知占位符.has(项));
   if (未知.length > 0) {
     项.push({
       级别: 'warning',
@@ -353,8 +355,10 @@ function 检查ComfyUI(设置: 文生图系统设置, 资源?: Comfy可选资源
   // 用户得自己在几十个节点里翻，实测就卡在这一步。
   const 文本节点 = 可解析 ? 找提示词节点(解析结果) : { 正向: [], 负向: [] };
   const 必需的: Array<[string, boolean, string[], string, string]> = [
-    ['正向提示词', 工作流.includes('%prompt%') || 工作流.includes('%comfyuizhengxiangtishici%'), 文本节点.正向, '%prompt%', '正向'],
-    ['负向提示词', 工作流.includes('%negative%') || 工作流.includes('%comfyuifuxiangtishici%'), 文本节点.负向, '%negative_prompt%', '负向'],
+    // 只认真正会被替换的 token：`%negative%` 这种半截名字不是占位符
+    // （`%negative_prompt%` 里不含 `%negative%`，按它判断会给**正确**的工作流发黄灯）。
+    ['正向提示词', 工作流.includes('%prompt%'), 文本节点.正向, '%prompt%', '正向'],
+    ['负向提示词', 工作流.includes('%negative_prompt%'), 文本节点.负向, '%negative_prompt%', '负向'],
   ];
   for (const [名称, 存在, 节点列表, 占位符, 方向] of 必需的) {
     if (!存在) {

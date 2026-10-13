@@ -1,14 +1,14 @@
 {
   "3": {
     "inputs": {
-      "seed": 156841103009312,
-      "steps": 20,
-      "cfg": 7,
-      "sampler_name": "euler_ancestral",
-      "scheduler": "normal",
+      "seed": "%seed%",
+      "steps": "%steps%",
+      "cfg": "%cfg_scale%",
+      "sampler_name": "%sampler_name%",
+      "scheduler": "%scheduler%",
       "denoise": 1,
       "model": [
-        "4",
+        "23",
         0
       ],
       "positive": [
@@ -31,7 +31,7 @@
   },
   "4": {
     "inputs": {
-      "ckpt_name": "v1-5-pruned-emaonly.safetensors"
+      "ckpt_name": "%MODEL_NAME%"
     },
     "class_type": "CheckpointLoaderSimple",
     "_meta": {
@@ -40,8 +40,8 @@
   },
   "5": {
     "inputs": {
-      "width": 512,
-      "height": 768,
+      "width": "%width%",
+      "height": "%height%",
       "batch_size": 1
     },
     "class_type": "EmptyLatentImage",
@@ -51,9 +51,9 @@
   },
   "6": {
     "inputs": {
-      "text": "__PROMPT__",
+      "text": "%prompt%",
       "clip": [
-        "4",
+        "23",
         1
       ]
     },
@@ -64,15 +64,15 @@
   },
   "7": {
     "inputs": {
-      "text": "__NEGATIVE_PROMPT__",
+      "text": "%negative_prompt%",
       "clip": [
-        "4",
+        "23",
         1
       ]
     },
     "class_type": "CLIPTextEncode",
     "_meta": {
-      "title": "CLIP Text Encode (Prompt)"
+      "title": "CLIP Text Encode (Negative)"
     }
   },
   "8": {
@@ -93,7 +93,7 @@
   },
   "9": {
     "inputs": {
-      "filename_prefix": "SillyTavern",
+      "filename_prefix": "KaiTuoYiShi",
       "images": [
         "8",
         0
@@ -102,6 +102,82 @@
     "class_type": "SaveImage",
     "_meta": {
       "title": "Save Image"
+    }
+  },
+  "20": {
+    "inputs": {
+      "model": [
+        "4",
+        0
+      ],
+      "clip": [
+        "4",
+        1
+      ],
+      "lora_name": "%lora_name_1%",
+      "strength_model": "%lora_weight_1%",
+      "strength_clip": "%lora_weight_1%"
+    },
+    "class_type": "LoraLoader",
+    "_meta": {
+      "title": "LoRA 1（角色槽位 1）"
+    }
+  },
+  "21": {
+    "inputs": {
+      "model": [
+        "20",
+        0
+      ],
+      "clip": [
+        "20",
+        1
+      ],
+      "lora_name": "%lora_name_2%",
+      "strength_model": "%lora_weight_2%",
+      "strength_clip": "%lora_weight_2%"
+    },
+    "class_type": "LoraLoader",
+    "_meta": {
+      "title": "LoRA 2（角色槽位 2）"
+    }
+  },
+  "22": {
+    "inputs": {
+      "model": [
+        "21",
+        0
+      ],
+      "clip": [
+        "21",
+        1
+      ],
+      "lora_name": "%lora_name_3%",
+      "strength_model": "%lora_weight_3%",
+      "strength_clip": "%lora_weight_3%"
+    },
+    "class_type": "LoraLoader",
+    "_meta": {
+      "title": "LoRA 3（角色槽位 3）"
+    }
+  },
+  "23": {
+    "inputs": {
+      "model": [
+        "22",
+        0
+      ],
+      "clip": [
+        "22",
+        1
+      ],
+      "lora_name": "%lora_name_4%",
+      "strength_model": "%lora_weight_4%",
+      "strength_clip": "%lora_weight_4%"
+    },
+    "class_type": "LoraLoader",
+    "_meta": {
+      "title": "LoRA 4（角色槽位 4）"
     }
   }
 }
