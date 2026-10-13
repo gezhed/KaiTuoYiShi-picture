@@ -33,6 +33,13 @@ export interface 提示词预览 {
   负向提示词: string;
   /** 命中的角色（名称 + 位置）. */
   命中角色: Array<{ 名称: string; 提示词: string; 位置: string }>;
+  /**
+   * 本轮会填进 ComfyUI 工作流 LoRA 槽位的角色 LoRA（最多 4 个）。
+   *
+   * 它是「角色绑定 → 实际生效」这条链上唯一能提前看见的环节：
+   * 槽位只在角色**出场**时才有值，没命中就是空数组（对应的 LoraLoader 会被跳过）。
+   */
+  lora: Array<{ 名称: string; 权重: number }>;
   /** 角色带出的负面词。 */
   角色负面: string;
   /** 从提示词里剥出的尺寸；未写或未开启自主分辨率时为 null。 */
@@ -60,6 +67,7 @@ export function 生成提示词预览(
     正向提示词: '',
     负向提示词: '',
     命中角色: [],
+    lora: [],
     角色负面: '',
     宽度: null,
     高度: null,
@@ -81,6 +89,7 @@ export function 生成提示词预览(
 
     return {
       ...空结果,
+      lora: 组装.lora ?? [],
       提示词正文: 正文,
       角色替换后: 角色替换.提示词,
       主体提示词: 替换.modifiedPrompt,

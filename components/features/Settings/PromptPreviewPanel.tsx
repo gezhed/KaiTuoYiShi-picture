@@ -27,6 +27,14 @@ export function PromptPreviewPanel({
     [系统, 提交的, 角色上下文],
   );
 
+  // 角色 LoRA 是否真的会进工作流，这里能一眼看出来（用户报过「LoRA 不生效」）。
+  const 工作流有槽位 = useMemo(() => {
+    const 档案 = 系统.comfyui.档案列表[系统.comfyui.当前档案];
+    const 文本 = 档案?.工作流Json ?? '';
+    return [1, 2, 3, 4].every((序号) => 文本.includes(`%lora_name_${序号}%`))
+      || 文本.includes('%lora_name_1%');
+  }, [系统.comfyui.档案列表, 系统.comfyui.当前档案]);
+
   const 复制 = async (文本: string) => {
     try {
       await navigator.clipboard.writeText(文本);
@@ -98,6 +106,34 @@ export function PromptPreviewPanel({
           {!预览.自主分辨率 ? '　— 关闭时提示词里的 WxH 不会被识别。' : ''}
         </div>
       </字段>
+
+      {系统.渠道 === 'comfyui' ? (
+        <字段 label={`生效的角色 LoRA（${预览.lora.length}）`} hint="按出场顺序填进工作流的 %lora_name_1%…%lora_name_4%；没填的槽提交前自动跳过。">
+          {!工作流有槽位 ? (
+            <提示条
+              kind="error"
+              text='当前工作流里没有 LoRA 槽位占位符，角色绑的 LoRA 不会加载。请在 LoraLoader 的 lora_name 写 "%lora_name_1%"（第 N 槽写 %lora_name_N%），strength_model / strength_clip 写 "%lora_weight_N%"。'
+            />
+          ) : 预览.lora.length === 0 ? (
+            <提示条
+              kind="info"
+              text="本轮没有识别到「出场且绑了 LoRA」的角色，四个槽都会跳过。出场判定：提示词里有 $角色名-…$ 段，或角色名/别名直接出现在提示词文本里。"
+            />
+          ) : (
+            <div className="space-y-1">
+              {预览.lora.map((项, 序号) => (
+                <div
+                  key={`${项.名称}-${序号}`}
+                  className="px-2 py-1 font-mono text-[11px]"
+                  style={{ border: '1px solid rgba(var(--tj-accent-primary), var(--tj-edge-tint-weak))' }}
+                >
+                  槽 {序号 + 1}：{项.名称} × {项.权重}
+                </div>
+              ))}
+            </div>
+          )}
+        </字段>
+      ) : null}
 
       {预览.命中角色.length > 0 ? (
         <字段 label={`命中的角色（${预览.命中角色.length}）`}>

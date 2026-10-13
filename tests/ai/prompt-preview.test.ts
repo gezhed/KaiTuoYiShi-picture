@@ -51,6 +51,38 @@ function 建设置(补丁: (设置: ReturnType<typeof 创建默认文生图系�
   return 设置;
 }
 
+describe('生成提示词预览：角色 LoRA', () => {
+  it('出场角色绑了 LoRA 时列出来（按出场顺序、上限 4）', () => {
+    const 角色 = 建角色({
+      nameCN: '流萤|萨姆',
+      LoRA: [
+        { id: 'l1', 名称: 'krea.safetensors', 权重: 0.8 },
+        { id: 'l2', 名称: 'detail.safetensors', 权重: 1 },
+      ],
+    });
+    const 设置 = 创建默认文生图系统设置();
+    const 上下文: 角色匹配上下文 = { 启用列表: [角色.id], 全部角色: { [角色.id]: 角色 } };
+    const 预览 = 生成提示词预览(设置, 'image###1girl, $流萤-sfw-upperbody$###', 上下文);
+    expect(预览.lora).toEqual([
+      { 名称: 'krea.safetensors', 权重: 0.8 },
+      { 名称: 'detail.safetensors', 权重: 1 },
+    ]);
+  });
+
+  it('角色没出场 / 没绑 LoRA 时是空数组（对应槽位会被跳过）', () => {
+    const 角色 = 建角色({ nameCN: '流萤', LoRA: [{ id: 'l1', 名称: 'krea.safetensors', 权重: 0.8 }] });
+    const 设置 = 创建默认文生图系统设置();
+    const 上下文: 角色匹配上下文 = { 启用列表: [角色.id], 全部角色: { [角色.id]: 角色 } };
+    // 提示词里没有 $…$ 也没有名字 → 不算出场。
+    expect(生成提示词预览(设置, 'image###1girl, solo###', 上下文).lora).toEqual([]);
+    // 出场但没绑 LoRA 也是空。
+    const 无LoRA = 建角色({ nameCN: '三月七' });
+    expect(生成提示词预览(设置, 'image###$三月七-sfw-upperbody$###', {
+      启用列表: [无LoRA.id], 全部角色: { [无LoRA.id]: 无LoRA },
+    }).lora).toEqual([]);
+  });
+});
+
 describe('生成提示词预览', () => {
   it('剥掉标记外壳', () => {
     const 预览 = 生成提示词预览(
