@@ -5,6 +5,7 @@
  * 不做自动静默回灌——那会与当前会话内存里的进度冲突；只提示，由用户决定。
  */
 import { 对账并补齐磁盘, 检查磁盘是否领先 } from '@/services/storage/diskPersistence';
+import { 就地同步 } from '@/services/localSave/inPlaceSync';
 
 const 提示条ID = 'kty-cross-device-sync';
 
@@ -39,9 +40,9 @@ function 显示提示条(): void {
   文字.textContent = '检测到其他设备有更新的进度';
 
   const 刷新 = document.createElement('button');
-  刷新.textContent = '刷新同步';
+  刷新.textContent = '同步最新进度';
   刷新.style.cssText = 'padding:5px 10px;border-radius:7px;border:1px solid rgba(126,180,255,0.55);background:rgba(126,180,255,0.16);color:#cfe4ff;cursor:pointer;font:inherit';
-  刷新.onclick = () => { window.location.reload(); };
+  刷新.onclick = () => { if (!就地同步()) window.location.reload(); };
 
   const 关闭 = document.createElement('button');
   关闭.textContent = '×';

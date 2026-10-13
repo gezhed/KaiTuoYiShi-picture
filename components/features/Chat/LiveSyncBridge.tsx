@@ -2,6 +2,7 @@ import type { ReactElement } from 'react';
 import { useEffect, useRef, useState } from 'react';
 
 import { setStreamingMessage } from '@/utils/streamingMessageStore';
+import { 注册就地同步 } from '@/services/localSave/inPlaceSync';
 import { 订阅实时事件, 读取客户端ID } from '@/services/localSave/liveSync';
 
 interface LiveSyncBridgeProps {
@@ -23,6 +24,12 @@ export function LiveSyncBridge({ on同步 }: LiveSyncBridgeProps): ReactElement 
   const [提示, set提示] = useState('');
   const [可刷新, set可刷新] = useState(false);
   const 见过活动 = useRef(false);
+
+  // 把「就地同步」注册到全局，供跨设备弹条等非 React 浮层调用（避免整页重载）。
+  useEffect(() => {
+    注册就地同步(on同步 ?? null);
+    return () => { 注册就地同步(null); };
+  }, [on同步]);
 
   useEffect(() => {
     const 我 = 读取客户端ID();
