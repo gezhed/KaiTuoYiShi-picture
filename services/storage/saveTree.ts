@@ -14,6 +14,7 @@ import { runWithSaveMutationPriority } from '@/services/storage/saveCatalogRepai
 import { openDB, SAVES_STORE, SAVE_SUMMARIES_STORE, SAVE_NODE_DELTAS_STORE, SAVE_ASSETS_STORE, NEWEST_STORY_STORE } from './dbConnection';
 import { buildDeltaOnlyStoredSave, buildSaveNodeDeltaRecord, isDeltaOnlyStoredSave } from '@/utils/saveDeltaStorage';
 import { extractSaveAssetRecords, materializeSaveAssetRecords, stripSaveAssetPayloadForStorage } from '@/utils/saveAssetStorage';
+import { 投影存档载荷为落盘 } from '@/utils/savePayloadProjection';
 import { omitKeys, toError } from '@/utils/storageUtils';
 
 export interface LeafNodeResult {
@@ -23,7 +24,8 @@ export interface LeafNodeResult {
 
 export async function createLeafNode(payload: 存档数据): Promise<LeafNodeResult> {
   const withMarker = {
-    ...payload,
+    // 活跃叶子也要投影：否则「载入头叶子 → 打补丁 → 再存」会把胖档原样复制下去。
+    ...投影存档载荷为落盘(payload, 'head'),
     saveRuntime: { unsealedHead: true },
   } as StoredSaveMeta;
   const saveId = await saveGame(withMarker, { forceFullStore: true });
@@ -53,7 +55,7 @@ export async function sealLeafRow(sealedPayload: 存档数据): Promise<void> {
     return;
   }
   const sealedFields = omitKeys(
-    stripEphemeralFields(sealedPayload) as 存档数据 & { saveStorage?: unknown },
+    stripEphemeralFields(投影存档载荷为落盘(sealedPayload, 'sealed')) as 存档数据 & { saveStorage?: unknown },
     ['queueTasks', 'saveStorage'] as const,
   );
   const sealedStored = stripSaveAssetPayloadForStorage({
