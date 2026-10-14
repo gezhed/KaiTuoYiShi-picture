@@ -419,38 +419,62 @@ async function syncFromDisk(diskDbVersion: number | null): Promise<number> {
   return restored;
 }
 
-/** 把某 store 的全部现有行重灌到磁盘：**用游标分批**，内存不随库大小增长。 */
-async function flushStoreFromIdb(db: IDBDatabase, store: LocalSaveStoreName): Promise<void> {
-  const keyPath = localSaveStoreKeyPath(store);
-  let 本批 = 0;
-  await new Promise<void>((resolve, reject) => {
+/** 读一批（最多 count 行，从 afterKey 之后开始）。独立事务，读完即关，不跟网络死磕。 */
+function 读一批存档行(
+  db: IDBDatabase,
+  store: LocalSaveStoreName,
+  afterKey: IDBValidKey | null,
+  count: number,
+): Promise<{ entries: Array<{ key: IDBValidKey; value: unknown }>; lastKey: IDBValidKey | null }> {
+  return new Promise((resolve, reject) => {
+    const entries: Array<{ key: IDBValidKey; value: unknown }> = [];
+    let lastKey: IDBValidKey | null = afterKey;
     const tx = db.transaction(store, 'readonly');
-    const 游标请求 = tx.objectStore(store).openCursor();
+    const range = afterKey === null ? undefined : IDBKeyRange.lowerBound(afterKey, true);
+    const 游标请求 = tx.objectStore(store).openCursor(range);
     游标请求.onsuccess = () => {
       const 游标 = 游标请求.result;
-      if (!游标) {
-        resolve();
+      // 库里没货了、或本批已满：直接收工（不再 continue，事务自行提交）。
+      if (!游标 || entries.length >= count) {
+        resolve({ entries, lastKey });
         return;
       }
-      const map = ensureStoreMap(store);
-      if (map) {
-        map.set(keyToString(游标.key), {
-          type: 'put',
-          value: withKeyPath(游标.value, keyPath, 游标.key),
-          key: 游标.key,
-        });
-        本批 += 1;
-      }
-      if (本批 >= 24) {
-        // 先落盘再继续游标：待处理 ops 始终不超过一批。
-        本批 = 0;
-        void flush().then(() => 游标.continue());
-      } else {
-        游标.continue();
-      }
+      entries.push({ key: 游标.key, value: 游标.value });
+      lastKey = 游标.key;
+      游标.continue();
     };
     游标请求.onerror = () => reject(toError(游标请求.error));
   });
+}
+
+/**
+ * 把某 store 的全部现有行重灌到磁盘：**分批读、读一批写一批**，内存不随库大小增长。
+ *
+ * 关键：IndexedDB 事务在事件循环让出且无待处理请求时会**自动提交关闭**。
+ * 所以绝不能在游标回调里 await 网络（落盘）——那样事务会先关，随后的
+ * `游标.continue()` 会抛错且 `onsuccess` 再不触发，整段 Promise 永不 resolve，
+ * 启动便永久卡死。这里改为每批用独立事务读完，再在事务之外落盘。
+ */
+async function flushStoreFromIdb(db: IDBDatabase, store: LocalSaveStoreName): Promise<void> {
+  const keyPath = localSaveStoreKeyPath(store);
+  const 批大小 = 24;
+  let afterKey: IDBValidKey | null = null;
+  for (;;) {
+    const { entries, lastKey } = await 读一批存档行(db, store, afterKey, 批大小);
+    if (entries.length === 0) break;
+    const map = ensureStoreMap(store);
+    if (map) {
+      for (const { key, value } of entries) {
+        map.set(keyToString(key), {
+          type: 'put',
+          value: withKeyPath(value, keyPath, key),
+          key,
+        });
+      }
+    }
+    afterKey = lastKey;
+    await flush(); // 事务已关闭，这里 await 网络是安全的
+  }
 }
 
 /** 把 IDB 全部现有行重灌到磁盘（分 store、分页；用于修补历史遗漏）。 */
@@ -470,6 +494,18 @@ async function flushAllFromIdb(): Promise<void> {
  * - 其余情况（含未标记的 IDB）保留 IDB，交给镜像把磁盘追平，避免误清更晚的数据。
  * 任何失败都不得阻断启动——本地落盘只是增强，不是运行前提。
  */
+/** 启动兜底：镜像修补/对账这类「增强步骤」绝不允许无限期阻塞界面——超时就放行，下次启动再补。 */
+const BOOT_STEP_TIMEOUT_MS = 30_000;
+
+function 限时<T>(任务: Promise<T>, ms: number, 标签: string): Promise<T> {
+  return Promise.race([
+    任务,
+    new Promise<T>((_, reject) => {
+      setTimeout(() => reject(new Error(`${标签}超时（${ms}ms）`)), ms);
+    }),
+  ]);
+}
+
 export async function bootstrapDiskPersistence(): Promise<void> {
   installDbWriteSink(handleBatch);
   suspended = true;
@@ -508,7 +544,7 @@ export async function bootstrapDiskPersistence(): Promise<void> {
   }
   try {
     if (enabled && readLocalStorage(MIRROR_VERSION_KEY) !== MIRROR_VERSION) {
-      await flushAllFromIdb();
+      await 限时(flushAllFromIdb(), BOOT_STEP_TIMEOUT_MS, '镜像修补');
       writeLocalStorage(MIRROR_VERSION_KEY, MIRROR_VERSION);
       devLog('save', 'disk-mirror-repaired', { version: MIRROR_VERSION });
     }
@@ -516,7 +552,7 @@ export async function bootstrapDiskPersistence(): Promise<void> {
     devLogError('save', 'disk-mirror-repair-failed', error);
   }
   try {
-    await 对账并补齐磁盘();
+    await 限时(对账并补齐磁盘(), BOOT_STEP_TIMEOUT_MS, '对账');
   } catch (error) {
     devLogError('save', 'disk-reconcile-failed', error);
   }
