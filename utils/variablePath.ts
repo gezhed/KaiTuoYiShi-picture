@@ -3,12 +3,22 @@ import type { 变量命令动作 } from '@/models/variableCommand';
 
 export type PathToken = string | number;
 
-const 深拷贝 = <T,>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
+/**
+ * JSON 往返深拷贝。
+ *
+ * 坑：`JSON.stringify(undefined)` 返回的是 `undefined` 而不是字符串，直接交给 `JSON.parse`
+ * 会抛 `"undefined" is not valid JSON`。变量事实对象里遍地是 `xx || undefined` 的字段，
+ * 一旦没值就走进写入/合并路径，会直接弄挂整轮变量结算。
+ */
+const 深拷贝 = <T,>(value: T): T =>
+  value === undefined ? value : (JSON.parse(JSON.stringify(value)) as T);
 
 const 是对象 = (v: unknown): v is Record<string, unknown> =>
   Boolean(v) && typeof v === 'object' && !Array.isArray(v);
 
 const 深合并对象 = (left: unknown, right: unknown): unknown => {
+  // `undefined` 在这套数据里表示“本回合该字段没有值”：保留原值，不要把已有内容抹掉。
+  if (right === undefined) return left;
   if (Array.isArray(right)) return 深拷贝(right);
   if (!是对象(right)) return 深拷贝(right);
   const seed: Record<string, unknown> = 是对象(left) ? 深拷贝(left) : {};
