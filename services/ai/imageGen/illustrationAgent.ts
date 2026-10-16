@@ -27,6 +27,7 @@
  */
 
 import type { LLM条目, LLM设置 } from '@/models/genSystem';
+import { isReasoningModelId } from '@/services/ai/deepSeekModelPolicy';
 import { 解析插图提示词, type 解析插图 } from './illustrationProtocol';
 import { 应用词汇替换规则, 解析词汇替换规则 } from './wordReplacement';
 
@@ -250,6 +251,31 @@ export const 思考工具声明 = [{
     },
   },
 }];
+
+/**
+ * 这个模型是不是「思考型」——思考模式下只接受 `tool_choice: auto / none`，
+ * 指名强制某个函数会被上游直接 400：
+ *
+ *   API Error 400: {"error":{"message":"Thinking mode does not support this tool_choice",…}}
+ *
+ * 判据比 `isReasoningModelId` 宽一点：那个是给 DeepSeek 恢复链路用的，
+ * 这里还要覆盖中转的常见命名（`…-reasoning`、`o1` / `o3` / `o4`）。
+ * 名字里看不出来的情况（思考开关在网关上）由 `chatCompletionNonStream`
+ * 的 400 降级兜底，所以这里宁可漏判也不要误判——漏判只是多一次往返。
+ */
+const 额外思考型标记 = /(^|[/:._\-\s])(reasoning|o1|o3|o4)(?=$|[/:._\-\s])/i;
+
+export function 是否思考型模型(模型: string): boolean {
+  const 名 = (模型 ?? '').trim();
+  return isReasoningModelId(名) || 额外思考型标记.test(名);
+}
+
+/** 「正文配图」这次请求该带的 tool_choice。思考型模型只能用软约束。 */
+export function 提示词工具约束(模型: string): 'auto' | { type: 'function'; function: { name: string } } {
+  return 是否思考型模型(模型)
+    ? 'auto'
+    : { type: 'function', function: { name: 默认工具名 } };
+}
 
 /**
  * 把 `%TOOL_NAME%` 换成真实工具名。

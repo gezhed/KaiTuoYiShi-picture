@@ -4,7 +4,7 @@ import type { 叙事插图, 聊天消息 } from '@/models/chat';
 import type { 相册系统 } from '@/models/imageGeneration';
 import { chatCompletionNonStream } from '@/services/ai/chatCompletionClient';
 import type { 传输诊断 } from '@/services/ai/imageGen/illustrationAgent';
-import { 思考工具声明, 默认工具名 } from '@/services/ai/imageGen/illustrationAgent';
+import { 思考工具声明, 提示词工具约束 } from '@/services/ai/imageGen/illustrationAgent';
 import { 取文生图LLM配置 } from '@/services/ai/imageGen/llmConfig';
 import { 创建相册图片条目, 添加图片到相册 } from '@/utils/albumActions';
 import { writeLeafNode } from '@/services/storage/saveTree';
@@ -125,7 +125,10 @@ export function 构造插图依赖(
           // 否则模型既不直出文本也无工具可用，只能返回空内容。
           tools: 思考工具声明,
           // 只声明工具不够：模型仍可选择回普通文本。预设明确禁止直出时必须强制。
-          toolChoice: { type: 'function', function: { name: 默认工具名 } },
+          // 但思考型模型不接受强制——上游会回 400
+          //（`Thinking mode does not support this tool_choice`），所以先按模型名
+          // 预判，退成 `auto`；名字看不出来的由 chatCompletionNonStream 的 400 降级兜底。
+          toolChoice: 提示词工具约束(LLM配置.model),
           parallelToolCalls: false,
         }),
         () => 诊断,

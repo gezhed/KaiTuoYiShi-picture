@@ -111,6 +111,34 @@ export function isDeepSeekPrefixUnsupportedError(error: unknown): boolean {
   return /prefix/i.test(text) && /(unsupported|not support|不支持|invalid|beta|400|422)/i.test(text);
 }
 
+/**
+ * 是否「指名强制某个函数」的 tool_choice。
+ *
+ * OpenAI 兼容语义里 `auto` / `none` 是软约束，`required` 与
+ * `{ type: 'function', function: { name } }` 才是硬约束。
+ * 思考型模型（Anthropic extended thinking、DeepSeek reasoner、Qwen thinking …）
+ * 只接受软约束，硬约束在网关就被 400 掉。
+ */
+export function isForcedToolChoice(choice: unknown): boolean {
+  if (typeof choice === 'string') return choice === 'required';
+  return typeof choice === 'object' && choice !== null;
+}
+
+/**
+ * 上游是否明确拒绝了强制工具调用。
+ *
+ * 报错措辞各家不同，但一定会同时提到 `tool_choice` 与「思考 / 不支持」，例如
+ * `API Error 400: {"error":{"message":"Thinking mode does not support this tool_choice",…}}`。
+ *
+ * 为什么不能只靠模型名预判：思考模式常常是**网关侧**的开关
+ * （中转给一个名字里没有 thinking 的模型开了思考），模型名看不出来。
+ */
+export function isForcedToolChoiceUnsupportedError(error: unknown): boolean {
+  const text = error instanceof Error ? error.message : typeof error === 'string' ? error : '';
+  return /tool_choice/i.test(text)
+    && /(thinking|reasoning|思考|推理|does not support|not support|unsupported|不支持|invalid)/i.test(text);
+}
+
 export function normalizeClaudeBaseUrl(baseUrl: string): string {
   const base = baseUrl.replace(/\/+$/, '');
   return base.endsWith('/v1') ? base : `${base}/v1`;

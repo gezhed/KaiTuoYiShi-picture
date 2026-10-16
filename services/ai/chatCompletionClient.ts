@@ -5,7 +5,7 @@ import { completionClaudeNonStream, streamClaude } from './chatCompletionClaude'
 import { streamGemini } from './chatCompletionGemini';
 import { buildOpenAICompatibleTransport, errorText, fetchWithApiErrorReport, formatOpenAICompatibleError, readJsonResponseBody, streamOpenAICompatible, throwApiError } from './chatCompletionOpenAICompat';
 import { completionOpenCodeNonStream, streamOpenCode } from './chatCompletionOpenCode';
-import { buildMessages, detectProvider, isDeepSeekPrefixUnsupportedError, mergePrefixResult, stripDeepSeekPrefixMessages, withPrefixMessages } from './chatCompletionProvider';
+import { buildMessages, detectProvider, isDeepSeekPrefixUnsupportedError, isForcedToolChoice, isForcedToolChoiceUnsupportedError, mergePrefixResult, stripDeepSeekPrefixMessages, withPrefixMessages } from './chatCompletionProvider';
 import { parseOpenAICompatibleTextResponse, reportOpenAICompatibleDiagnostics } from './chatCompletionStream';
 import type { ChatCompletionRequest, StreamCallbacks } from './chatCompletionTypes';
 import { emitUsageFromResponse } from './chatCompletionUsage';
@@ -188,6 +188,13 @@ async function chatCompletionNonStreamOnce(
         prefixMode: false,
         prefixContent: undefined,
       });
+    }
+    // 思考型模型只接受 tool_choice 的 auto / none，指名强制某个函数会被直接 400。
+    // 与上面的 prefix 降级同理：去掉硬约束重发一次，别让整轮配图因为一次拒答就失败。
+    // 降级后模型仍然可以选择调工具（`auto`），也可以直出文本——两条路解析侧都收。
+    if (isForcedToolChoice(request.toolChoice) && isForcedToolChoiceUnsupportedError(error)) {
+      console.warn('[tool_choice] 当前接口/模型不接受强制工具调用，已降级为 auto 重试。', error);
+      return chatCompletionNonStreamOnce(config, { ...request, toolChoice: 'auto' });
     }
     await throwApiError(deepSeekPayload.config, '非流式补全', transport.upstreamUrl, 'non-stream', response.status, text,
       (status, responseText) => formatOpenAICompatibleError(deepSeekPayload.config, status, responseText));
