@@ -196,14 +196,15 @@ export async function compressAutoSaveWindow(rootId: string): Promise<number> {
   if (!drop.length) return 0;
   // 重定父的边界**只能由链上的截断点决定**：额外清除的节点（同根孤儿链、其它树）与保留链
   // 没有父子关系，拿它们的 parent 当边界会把链根接到链尾 —— 实测会绕成环，整棵存档树读不出来。
-  // 链下标可能越界（链比窗口短时），显式标成可能为空，守卫才是必要的。
-  const keepOldest: SaveListItemSummary | undefined = chain[AUTO_WINDOW_DELTAS];
-  const 链上新父: SaveListItemSummary | undefined = 链上截断[链上截断.length - 1];
-  const nextParentNodeId = 链上新父?.saveTree?.parentNodeId ?? null;
+  // 链下标可能越界（链比窗口短时）。这里用显式守卫而不是可选链：该索引在类型上被视为非空，
+  // 可选链会被 lint 判为多余，但运行时确实可能越界。
+  const keepOldest = chain[AUTO_WINDOW_DELTAS] as SaveListItemSummary | undefined;
+  const 链上新父 = 链上截断[链上截断.length - 1] as SaveListItemSummary | undefined;
+  const nextParentNodeId = 链上新父 ? (链上新父.saveTree?.parentNodeId ?? null) : null;
   const db = await openDB();
   await deleteManagedSaveItems(db, drop);
   // 只有链上确实截断过，才存在「保留链的新链根」；否则 keepOldest 为空，不能重定父。
-  if (链上截断.length && keepOldest?.saveTree?.nodeId) {
+  if (链上截断.length && keepOldest && keepOldest.saveTree?.nodeId) {
     await reparentSaveNode(db, keepOldest, nextParentNodeId);
   }
   devLog('save', 'auto-window-compressed', {
