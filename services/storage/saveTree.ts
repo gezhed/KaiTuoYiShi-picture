@@ -164,6 +164,29 @@ export async function compressAutoSaveWindow(rootId: string): Promise<number> {
     组.push(item);
     按根.set(根, 组);
   }
+  // 同一根下、但**不在 head 链上**的自动节点：父链断裂留下的孤儿链（重载/对账后很常见）。
+  // 它们从 head 根本不可达。旧实现只按 rootId 分组清“其它树”，这些共用同一个 rootId
+  // 的断裂链会被当成“当前链”放过 —— 每条链各留 7 个，一夜下来堆成一两百个节点。
+  // 只当整个根都不含手动档时才清（与“手动档一律不动”一致）。
+  //
+  // 唯一不能碰的是**未封版**节点：它要么是正在写的头，要么是崩溃窗口里待采纳的子叶。
+  // 已验证的保留条件：未封版 **且父节点在 head 链上** —— 那才是重载分叉留下的待采纳子叶；
+  // 父链已经断了的未封版孤儿头属于噪声，可以清。增量基底由 deleteManagedSaveItems
+  // 兜底降级为不可见基底，不会误删。
+  if (当前根) {
+    const 本根 = 按根.get(当前根) ?? [];
+    if (本根.every((项) => 项.type === 'auto')) {
+      for (const item of 本根) {
+        const nodeId = item.saveTree?.nodeId;
+        if (!nodeId || seenNodeIds.has(nodeId)) continue;
+        if (item.unsealedHead === true) {
+          const parent = item.saveTree?.parentNodeId ?? null;
+          if (parent && seenNodeIds.has(parent)) continue;
+        }
+        drop.push(item);
+      }
+    }
+  }
   for (const [根, 组] of 按根) {
     if (根 === 当前根) continue;
     if (组.every((项) => 项.type === 'auto')) drop.push(...组);
