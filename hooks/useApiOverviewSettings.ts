@@ -206,6 +206,11 @@ export function useApiOverviewSettings(props: ApiSettingsOverviewProps) {
           ...gameSettings.文生图系统.LLM,
           API: profile.routes.文生图词组转化器API,
         },
+        角色AI: {
+          ...gameSettings.文生图系统.角色AI,
+          // 旧配置包里没有这一项：缺省时保留本机现值，不要用空值把它清掉。
+          API: profile.routes.文生图角色生成API ?? gameSettings.文生图系统.角色AI.API,
+        },
       },
     };
     const persisted = await onPersistApiProfile(nextApiSettings, nextGameSettings);
@@ -306,10 +311,22 @@ export function useApiOverviewSettings(props: ApiSettingsOverviewProps) {
         忆庭召回API: { ...gameSettings.记忆系统.忆庭召回API, ...auxApiPatch },
         忆庭精炼API: { ...gameSettings.记忆系统.忆庭精炼API, ...auxApiPatch },
       },
+      // 文生图里还有两处同样走「文本 LLM」的覆盖：LLM 预设（正文 → 插图提示词）
+      // 与角色管理「生成」（一键生成角色特征）。字段形状与上面完全一致，
+      // 之前漏在补丁外面，用户只能到文生图面板里一条条手填。
+      // 注意只覆盖这两个文本接口，出图渠道（ComfyUI / NovelAI / SD / Banana）不动。
+      文生图系统: {
+        ...gameSettings.文生图系统,
+        LLM: { ...gameSettings.文生图系统.LLM, API: { ...gameSettings.文生图系统.LLM.API, ...auxApiPatch } },
+        角色AI: { ...gameSettings.文生图系统.角色AI, API: { ...gameSettings.文生图系统.角色AI.API, ...auxApiPatch } },
+      },
     };
     onGameSettingsChange(nextGameSettings);
     await onPersistGameSettings(nextGameSettings);
-    setMessage({ kind: 'info', text: `已把其他文本 API 统一套用为：${provider} / ${model}` });
+    setMessage({
+      kind: 'info',
+      text: `已把其他文本 API（含文生图 LLM 预设、角色生成）统一套用为：${provider} / ${model}`,
+    });
   };
 
   const handleFetchAuxModels = async () => {

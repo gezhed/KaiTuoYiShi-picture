@@ -27,6 +27,13 @@ export interface API配置包 {
      * API 配置包 JSON 里，改名会让已有配置包认不出来。UI 上它已经叫「LLM 预设」。
      */
     文生图词组转化器API: 游戏设置['文生图系统']['LLM']['API'];
+    /**
+     * 「角色管理 → 生成」用的覆盖（一键生成角色特征）。
+     *
+     * 与 LLM 预设同样是文生图里的文本接口，所以一起进配置包；**可选**是因为
+     * 旧配置包（以及上游导出的包）里没有这一项，缺省时保留本机现值。
+     */
+    文生图角色生成API?: 游戏设置['文生图系统']['角色AI']['API'];
   };
 }
 
@@ -93,6 +100,7 @@ export const API配置包信封Schema = z.object({
     忆庭召回API: 忆庭API覆盖Schema,
     忆庭精炼API: 忆庭API覆盖Schema,
     文生图词组转化器API: LLMAPI覆盖Schema,
+    文生图角色生成API: LLMAPI覆盖Schema.optional(),
   }),
 });
 

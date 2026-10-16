@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { validateApiProfile } from '@/utils/apiProfile';
+import { buildApiProfile, validateApiProfile } from '@/utils/apiProfile';
+import { 创建默认游戏设置, type API设置 } from '@/models/settings';
 
 const 合法包 = {
   app: 'KaiTuoYiShi',
@@ -88,5 +89,41 @@ describe('API 配置包导入校验', () => {
   it('深层配置形状错误时拒绝导入', () => {
     expect(() => validateApiProfile({ ...合法包, routes: { ...合法包.routes, variableApi: { provider: 'invalid' } } }))
       .toThrow('API 配置包缺少必要配置。');
+  });
+});
+
+describe('文生图里走文本 LLM 的两个接口都要进配置包', () => {
+  const 空API设置: API设置 = { activeConfigId: null, configs: [] };
+
+  const 建游戏设置 = () => {
+    const game = 创建默认游戏设置();
+    game.文生图系统.LLM.API = { provider: 'deepseek', baseUrl: 'https://llm.test/v1', apiKey: 'sk-llm', model: 'llm-model' };
+    game.文生图系统.角色AI.API = { provider: 'gemini', baseUrl: 'https://char.test/v1', apiKey: 'sk-char', model: 'char-model' };
+    return game;
+  };
+
+  it('导出带上 LLM 预设与角色生成，导入后原样保留', () => {
+    const game = 建游戏设置();
+    const profile = buildApiProfile(空API设置, game, true);
+
+    expect(profile.routes.文生图词组转化器API).toEqual(game.文生图系统.LLM.API);
+    expect(profile.routes.文生图角色生成API).toEqual(game.文生图系统.角色AI.API);
+    expect(validateApiProfile(profile).routes.文生图角色生成API).toEqual(game.文生图系统.角色AI.API);
+  });
+
+  it('安全包（不含 Key）会把角色生成的 Key 一起清空', () => {
+    const profile = buildApiProfile(空API设置, 建游戏设置(), false);
+
+    expect(profile.routes.文生图词组转化器API.apiKey).toBe('');
+    expect(profile.routes.文生图角色生成API?.apiKey).toBe('');
+    // 其余字段要留着，否则导入方不知道该填哪个地址。
+    expect(profile.routes.文生图角色生成API?.baseUrl).toBe('https://char.test/v1');
+    expect(profile.routes.文生图角色生成API?.model).toBe('char-model');
+  });
+
+  it('没有这一项的旧包仍然能导入', () => {
+    const 旧包 = structuredClone(合法包);
+    expect(旧包.routes).not.toHaveProperty('文生图角色生成API');
+    expect(validateApiProfile(旧包).routes.文生图角色生成API).toBeUndefined();
   });
 });

@@ -77,6 +77,7 @@ export function buildApiProfile(settings: API设置, gameSettings: 游戏设置,
       忆庭召回API: gameSettings.记忆系统.忆庭召回API,
       忆庭精炼API: gameSettings.记忆系统.忆庭精炼API,
       文生图词组转化器API: gameSettings.文生图系统.LLM.API,
+      文生图角色生成API: gameSettings.文生图系统.角色AI.API,
     },
   }, includeApiKeys);
 }

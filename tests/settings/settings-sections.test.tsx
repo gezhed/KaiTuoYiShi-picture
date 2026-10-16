@@ -23,6 +23,7 @@ const 全部页签: SettingsTab[] = [
   'visual', 'theme', 'game', 'prompts', 'tavernPresets', 'extra',
   'api', 'apiErrors',
   'variableUpdate', 'variableRepair', 'memory', 'yiting', 'news', 'zhiku', 'storyWeaving', 'phone', 'imageGen',
+  'lanPlay',
   'variables', 'context', 'storage',
   'nsfw',
 ];

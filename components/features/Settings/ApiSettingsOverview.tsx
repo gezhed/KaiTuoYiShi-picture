@@ -473,7 +473,7 @@ export function ApiSettingsOverviewTab(props: ApiSettingsOverviewProps) {
                 ◆ 其他 API 模型设置
               </div>
               <div className="leading-relaxed" style={{ color: 'rgba(var(--tj-text-secondary), 0.68)' }}>
-                正文继续使用上方主模型；这里可以批量修改变量、新闻、手机、智库、剧情编织、记忆与忆庭的供应商、Base URL、Key 和模型 ID，不影响文生图。
+                正文继续使用上方主模型；这里可以批量修改变量、新闻、手机、智库、剧情编织、记忆与忆庭，以及文生图里的「LLM 预设」和「角色管理 → 生成」共用的供应商、Base URL、Key 和模型 ID。出图渠道（ComfyUI / NovelAI / SD / Banana）不受影响。
               </div>
               <div
                 className="leading-relaxed"
