@@ -10,8 +10,12 @@ import { useState } from 'react';
 import { fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
 import { ComfyUISettingsConsole } from '@/components/features/Settings/ComfyUISettingsConsole';
+import { SettingsModal } from '@/components/features/Settings/SettingsModal';
+import type { SettingsModalProps } from '@/components/features/Settings/settingsSections/types';
+import type { DeviceSettings } from '@/models/settings';
 import { 创建空API设置, 创建默认游戏设置, type 游戏设置 } from '@/models/settings';
 import type { LLM预设 } from '@/models/genSystem';
+import { 归一化游戏设置 } from '@/utils/gameSettingsHydration';
 import type { Comfy可选资源 } from '@/services/ai/imageGen/comfyClient';
 
 const 空资源: Comfy可选资源 = { 模型: [], 采样器: [], 调度器: [], vae: [], clip: [], lora: [] };
@@ -127,5 +131,115 @@ describe('LLM 预设的条目编辑也要能保存', () => {
     const 落盘预设 = 已落盘[0].文生图系统.LLM.预设列表['默认'];
     expect(落盘预设.entries).toHaveLength(1);
     expect(落盘预设.entries[0].content).toBe('改过的内容');
+  });
+});
+
+/**
+ * 按 App 的实际结构搭一个受控宿主：`deviceSettings` 挂在**宿主**上，
+ * 设置弹窗只是条件渲染。这样「关掉设置 → 重新打开」才是真正的复现路径
+ * （状态留在宿主里，不随弹窗卸载而丢）。
+ */
+function 建弹窗宿主(记落盘: (next: 游戏设置) => void, 初始?: 游戏设置) {
+  function Host() {
+    const [设备, set设备] = useState<DeviceSettings>(() => ({
+      apiSettings: 创建空API设置(),
+      gameSettings: 初始 ?? 创建默认游戏设置(),
+      theme: 'deepspace',
+      worldbooks: [],
+    }));
+    const [开着, set开着] = useState(true);
+    // 只有 imageGen 这一页会渲染，其余分组用不到；用断言把无关回调省掉。
+    const 只做文生图 = {
+      onClose: () => set开着(false),
+      deviceSettings: 设备,
+      onGameSettingsChange: (next: 游戏设置) => set设备((prev) => ({ ...prev, gameSettings: next })),
+      onThemeChange: () => {},
+      onPersistGameSettings: (next: 游戏设置) => {
+        记落盘(next);
+        return Promise.resolve();
+      },
+      onPersistTheme: () => Promise.resolve(),
+      fetchModels: () => Promise.resolve([]),
+      initialTab: 'imageGen',
+    } as unknown as SettingsModalProps;
+
+    return (
+      <>
+        <button type="button" onClick={() => set开着(true)}>重新打开设置</button>
+        {开着 && <SettingsModal {...只做文生图} />}
+      </>
+    );
+  }
+  return Host;
+}
+
+describe('关掉设置再打开，预设条目的改动不该丢', () => {
+  const 打开条目编辑 = (): HTMLTextAreaElement => {
+    fireEvent.click(screen.getByText('LLM 预设'));
+    fireEvent.click(screen.getByText('编辑'));
+    const 编辑区 = document.querySelector('textarea');
+    expect(编辑区).toBeTruthy();
+    return 编辑区 as HTMLTextAreaElement;
+  };
+
+  it('草稿阶段（还没落盘）关掉再打开仍然保留', async () => {
+    const 初始 = 创建默认游戏设置();
+    初始.文生图系统.LLM.预设列表 = { 默认: 带条目的预设 };
+    初始.文生图系统.LLM.当前预设 = '默认';
+
+    const Host = 建弹窗宿主(() => {}, 初始);
+    render(<Host />);
+
+    fireEvent.change(打开条目编辑(), { target: { value: '草稿内容' } });
+    fireEvent.click(screen.getByText('写入草稿'));
+
+    fireEvent.click(screen.getAllByLabelText('关闭')[0]);
+    fireEvent.click(screen.getByRole('button', { name: '重新打开设置' }));
+
+    fireEvent.click(await screen.findByText('LLM 预设'));
+    expect(screen.getByText('草稿内容')).toBeInTheDocument();
+  });
+
+  it('点页面底部保存之后，重新打开与落盘都是新内容', async () => {
+    const 初始 = 创建默认游戏设置();
+    初始.文生图系统.LLM.预设列表 = { 默认: 带条目的预设 };
+    初始.文生图系统.LLM.当前预设 = '默认';
+
+    const 已落盘: 游戏设置[] = [];
+    const Host = 建弹窗宿主((next) => 已落盘.push(next), 初始);
+    render(<Host />);
+
+    fireEvent.change(打开条目编辑(), { target: { value: '落盘内容' } });
+    fireEvent.click(screen.getByText('写入草稿'));
+    fireEvent.click(screen.getByText('保存文生图设置'));
+    await Promise.resolve();
+
+    expect(已落盘).toHaveLength(1);
+    const 落盘预设 = 已落盘[0].文生图系统.LLM.预设列表['默认'];
+    expect(落盘预设.entries[0].content).toBe('落盘内容');
+
+    fireEvent.click(screen.getAllByLabelText('关闭')[0]);
+    fireEvent.click(screen.getByRole('button', { name: '重新打开设置' }));
+    fireEvent.click(await screen.findByText('LLM 预设'));
+    expect(screen.getByText('落盘内容')).toBeInTheDocument();
+  });
+});
+
+/**
+ * 落盘 / 读回这一层：`persistGameSettings` 会先跑 `归一化游戏设置`，
+ * 启动时 `hydratePersistedGameSettings` 又跑一次 `归一化文生图系统设置`。
+ * 两处都得原样保留预设条目，否则「保存了、刷新就变回去」。
+ */
+describe('归一化不会丢掉预设条目', () => {
+  it('保存 → 读回之后条目内容不变', () => {
+    const 设置 = 创建默认游戏设置();
+    设置.文生图系统.LLM.预设列表 = { 默认: 带条目的预设 };
+    设置.文生图系统.LLM.当前预设 = '默认';
+
+    const 归一化后 = 归一化游戏设置(设置);
+
+    expect(归一化后.文生图系统.LLM.预设列表['默认'].entries).toHaveLength(1);
+    expect(归一化后.文生图系统.LLM.预设列表['默认'].entries[0].content).toBe('原始内容');
+    expect(归一化后.文生图系统.LLM.当前预设).toBe('默认');
   });
 });
