@@ -1,8 +1,17 @@
 /**
- * B 客户端：把 AI 流式请求交给本地服务端中转（服务端转发上游 + 广播正文给多端）。
+ * B 客户端：把 AI 请求交给本地服务端中转（服务端转发上游，流式还会广播正文给多端）。
  *
- * 本地服务不可用（例如部署到 Cloudflare Pages）时返回 null，调用方回退为直连上游。
- * 只改"传输通道"，不碰解析/业务，保证任何情况下都有直连兜底。
+ * 两种用途：
+ *   ① 显式开启（`kty.aiRelay = on`）→ 流式请求**优先**走中转，多端同看一条流；
+ *   ② 直连撞网络错误（绝大多数是 CORS：中转站没发 `Access-Control-Allow-Origin`）
+ *      → 自动改走同源中转兜底，不需要用户开开关，也不要求有请求体（模型列表是 GET）。
+ *
+ * 本地服务不可用（例如部署到 Cloudflare Pages）时一律返回 null，调用方回退直连。
+ * 只改传输通道，不碰解析/业务。
+ *
+ * 为什么兜底必须存在：`Failed to fetch` 在浏览器里是**没有响应**的意思。第三方中转
+ * 若不给 CORS 头（Google AI Studio 的 Build 部署、不少自建反代都是这样），
+ * 前端无论怎么填 Key 都拿不到数据；SillyTavern 能连是因为它有自己的 Node 后端转发。
  */
 let 本地可用: boolean | null = null;
 
@@ -31,19 +40,22 @@ function 归一化请求头(原始: RequestInit['headers']): Record<string, stri
   return 头;
 }
 
-/** 经本地服务端中转一次流式请求；不可用或失败时返回 null（调用方回退直连）。 */
-export async function 尝试本地中转(url: string, init: RequestInit): Promise<Response | null> {
-  if (!中转已启用()) return null;
+/**
+ * 提交一次中转请求。
+ *
+ * `本地可用 === false` 是粘性的：探到本地没有服务端（静态托管）之后就不再逐个请求重试，
+ * 否则每次网络失败都要多打一次注定 404 的请求。
+ */
+async function 提交中转(路径: string, url: string, init: RequestInit): Promise<Response | null> {
   if (本地可用 === false) return null;
-  if (typeof init.body !== 'string' || !init.body) return null;
   const 载荷 = JSON.stringify({
     url,
-    method: init.method ?? 'POST',
+    method: init.method ?? 'GET',
     headers: 归一化请求头(init.headers),
-    body: init.body,
+    body: typeof init.body === 'string' && init.body ? init.body : undefined,
   });
   try {
-    const 响应 = await fetch('/api/ai/stream', {
+    const 响应 = await fetch(路径, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: 载荷,
@@ -53,10 +65,35 @@ export async function 尝试本地中转(url: string, init: RequestInit): Promis
       本地可用 = false;
       return null;
     }
+    // 静态托管的 SPA 兜底会把 index.html 当 200 返回；类型不对就当没有中转。
+    const 类型 = (响应.headers.get('content-type') ?? '').toLowerCase();
+    if (!类型.includes('json') && !类型.includes('event-stream')) {
+      本地可用 = false;
+      return null;
+    }
     本地可用 = true;
     return 响应;
   } catch {
     本地可用 = false;
     return null;
   }
+}
+
+/** 显式开启时，让流式请求优先走本地中转；不可用或失败返回 null（调用方回退直连）。 */
+export async function 尝试本地中转(url: string, init: RequestInit): Promise<Response | null> {
+  if (!中转已启用()) return null;
+  if (typeof init.body !== 'string' || !init.body) return null;
+  return 提交中转('/api/ai/stream', url, init);
+}
+
+/**
+ * 直连失败之后的中转兜底。
+ *
+ * 只在网络层失败（CORS / DNS / TLS）时调用；已经拿到 HTTP 状态码的失败**不要**走这里——
+ * 那说明连通性是好的，换通道只会掩盖真正的报错。
+ */
+export async function 直连失败后经中转(url: string, init: RequestInit): Promise<Response | null> {
+  // 同源路径（`/api/opencode` 之类）本来就没有 CORS，再套一层没有意义。
+  if (!/^https?:/i.test(url)) return null;
+  return 提交中转('/api/ai/proxy', url, init);
 }

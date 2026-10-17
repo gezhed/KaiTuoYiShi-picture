@@ -69,8 +69,7 @@ function 抽取正文片段(文本: string): string {
 }
 
 /** 转发一次 AI 流式请求：回传字节原样给发起端，同时把正文片段广播出去。 */
-export async function 转发AI流(请求: AI中转请求, 断开信号?: AbortSignal): Promise<Response> {
-  const 上游 = await fetch(请求.url, {
+export async function 转发AI流(请求: AI中转请求, 断开信号?: AbortSignal): Promise<Response> {  const 上游 = await fetch(请求.url, {
     method: 请求.method ?? 'POST',
     headers: 请求.headers,
     body: 请求.body,
@@ -110,3 +109,20 @@ export async function 转发AI流(请求: AI中转请求, 断开信号?: AbortSi
     },
   });
 }
+
+/**
+ * 朴素转发一次 AI 请求：原样返回上游 Response，**不进实时通道、不改写内容**。
+ *
+ * 给「模型列表」这类一次性 GET 用：`转发AI流` 会广播 typing / turn-done 事件，
+ * 拿它去取 `/models` 会让所有联机设备看到一次假的「正在生成」。
+ * 也是浏览器直连被 CORS 挡住时的兜底通道。
+ */
+export async function 转发AI请求(请求: AI中转请求, 断开信号?: AbortSignal): Promise<Response> {
+  return fetch(请求.url, {
+    method: 请求.method ?? 'GET',
+    headers: 请求.headers,
+    body: 请求.body,
+    signal: 断开信号,
+  });
+}
+

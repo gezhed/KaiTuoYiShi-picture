@@ -18,7 +18,7 @@ import {
   校验局域网访问,
 } from './services/localSave/server/lanInfo';
 import { 发布实时事件, 处理实时订阅, 读取实时事件 } from './services/localSave/server/liveBus';
-import { 转发AI流, type AI中转请求 } from './services/localSave/server/aiRelay';
+import { 转发AI请求, 转发AI流, type AI中转请求 } from './services/localSave/server/aiRelay';
 
 function readRequestBody(req: import('node:http').IncomingMessage): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -280,6 +280,36 @@ function 安装实时通道(middlewares: 中间件宿主): void {
     }
     if (url.pathname === '/api/live/events' && req.method === 'GET') {
       jsonResponse(res, 200, { ok: true, events: 读取实时事件() });
+      return;
+    }
+    // 朴素转发：浏览器直连撞 CORS 时的兜底通道。只回传上游的状态码与 content-type，
+    // 正文原样带回；不进实时通道（模型列表是 GET，广播 typing/turn-done 是噪声）。
+    if (url.pathname === '/api/ai/proxy' && req.method === 'POST') {
+      void (async () => {
+        const 原始 = await readRequestBody(req).catch(() => '');
+        let 载荷: AI中转请求;
+        try {
+          载荷 = JSON.parse(原始) as AI中转请求;
+        } catch {
+          jsonResponse(res, 400, { ok: false, error: 'bad-json' });
+          return;
+        }
+        if (typeof 载荷.url !== 'string' || !/^https?:/i.test(载荷.url)) {
+          jsonResponse(res, 400, { ok: false, error: 'bad-url' });
+          return;
+        }
+        const 响应 = res;
+        try {
+          const 上游 = await 转发AI请求(载荷);
+          响应.statusCode = 上游.status;
+          const 类型 = 上游.headers.get('content-type');
+          if (类型) 响应.setHeader('content-type', 类型);
+          响应.end(Buffer.from(await 上游.arrayBuffer()));
+        } catch {
+          响应.statusCode = 502;
+          响应.end();
+        }
+      })();
       return;
     }
     jsonResponse(res, 404, { ok: false, error: 'not-found' });
