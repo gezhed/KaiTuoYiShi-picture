@@ -6,6 +6,7 @@ import { isArkBaseUrl, normalizeArkBaseUrl } from './arkProxyCore';
 import { isClineBaseUrl } from './clineProxyCore';
 import { CLINE_RECOMMENDED_MODELS } from './clineModels';
 import { fetchOpenAICompatibleModels } from './openAICompatibleModels';
+import { 带兜底取 } from './aiRelayClient';
 import { normalizeGeminiBaseUrl } from './geminiEndpointPolicy';
 import {
   createConnectionTestChallenge,
@@ -145,7 +146,7 @@ async function fetchMimoModels(baseRaw: string, apiKey: string): Promise<string[
 
   for (const url of candidates) {
     try {
-      const res = await fetch(url, {
+      const res = await 带兜底取(url, {
         headers: {
           'Content-Type': 'application/json',
           'api-key': apiKey,
@@ -323,7 +324,7 @@ async function fetchBaiduQianfanModels(baseRaw: string, apiKey: string): Promise
 async function fetchGeminiModels(baseRaw: string, apiKey: string): Promise<string[]> {
   const base = normalizeGeminiBaseUrl(baseRaw);
   const url = `${base}/models?key=${encodeURIComponent(apiKey)}`;
-  const res = await fetch(url).catch((e: unknown) => {
+  const res = await 带兜底取(url).catch((e: unknown) => {
     void appendApiErrorReport({
       source: 'Gemini 模型列表',
       config: { provider: 'gemini', baseUrl: baseRaw, apiKey },
@@ -362,7 +363,7 @@ async function fetchGeminiModels(baseRaw: string, apiKey: string): Promise<strin
 async function fetchClaudeModels(baseRaw: string, apiKey: string): Promise<string[]> {
   const base = baseRaw.replace(/\/+$/, '');
   const url = base.endsWith('/v1') ? `${base}/models` : `${base.replace(/\/v1\/?$/, '')}/v1/models`;
-  const res = await fetch(url, {
+  const res = await 带兜底取(url, {
     headers: {
       'x-api-key': apiKey,
       'anthropic-version': '2023-06-01',

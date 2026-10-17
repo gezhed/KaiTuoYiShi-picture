@@ -97,3 +97,19 @@ export async function 直连失败后经中转(url: string, init: RequestInit): 
   if (!/^https?:/i.test(url)) return null;
   return 提交中转('/api/ai/proxy', url, init);
 }
+
+/**
+ * 带 CORS 兜底的 fetch：直连在网络层失败时改走同源中转，两边都不行才抛原错。
+ *
+ * 模型列表的**每个**供应商分支都要走这个。只给「OpenAI 兼容」那条补兜底，
+ * 就会出现「其他 API 能拉到、主 API 拉不到」这种只差一个供应商选项的怪现象。
+ */
+export async function 带兜底取(url: string, init: RequestInit = {}): Promise<Response> {
+  try {
+    return await fetch(url, init);
+  } catch (错误) {
+    const 兜底 = await 直连失败后经中转(url, init);
+    if (兜底) return 兜底;
+    throw 错误;
+  }
+}

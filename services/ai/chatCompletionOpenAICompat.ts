@@ -1,5 +1,5 @@
 import { appendApiErrorReport } from './apiErrorReportService';
-import { 尝试本地中转, 直连失败后经中转 } from './aiRelayClient';
+import { 尝试本地中转, 带兜底取 } from './aiRelayClient';
 import { buildArkProxyBody, normalizeArkBaseUrl } from './arkProxyCore';
 import { buildClineProxyBody, normalizeClineBaseUrl } from './clineProxyCore';
 import { normalizePioneerBaseUrl } from './pioneerProxyCore';
@@ -192,14 +192,12 @@ export async function fetchWithApiErrorReport(
       const 中转 = await 尝试本地中转(url, init);
       if (中转) return 中转;
     }
-    return await fetch(url, init);
-  } catch (error) {
     // 直连失败在浏览器里几乎只有一个成因：CORS——中转站没发 Access-Control-Allow-Origin，
-    // 于是 fetch 抛 `TypeError: Failed to fetch`，连状态码都拿不到。这里改走同源中转再试一次
-    // （本地 dev/preview 才有该端点；静态托管下返回 null，照原样抛出）。
+    // 于是 fetch 抛 `TypeError: Failed to fetch`，连状态码都拿不到。带兜底取 会在网络层
+    // 失败时改走同源中转（本地 dev/preview 才有该端点；静态托管下照原样抛出）。
     // 注意只兜「网络层失败」：已经拿到状态码的报错说明连通性没问题，换通道只会掩盖真因。
-    const 兜底 = await 直连失败后经中转(url, init);
-    if (兜底) return 兜底;
+    return await 带兜底取(url, init);
+  } catch (error) {
     if (error && typeof error === 'object') {
       (error as Error & { alreadyReportedByApiLayer?: boolean }).alreadyReportedByApiLayer = true;
     }

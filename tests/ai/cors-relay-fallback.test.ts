@@ -41,7 +41,8 @@ async function 载入案例() {
   const relay = await import('@/services/ai/aiRelayClient');
   const models = await import('@/services/ai/openAICompatibleModels');
   const client = await import('@/services/ai/chatCompletionClient');
-  return { relay, models, client };
+  const apiTools = await import('@/services/ai/apiTools');
+  return { relay, models, client, apiTools };
 }
 
 function 取载荷(init?: RequestInit): Record<string, unknown> {
@@ -104,6 +105,52 @@ describe('模型列表：直连 CORS 失败后改走同源中转', () => {
     await expect(models.fetchOpenAICompatibleModels('https://relay.example.test/v1', 'sk-bad'))
       .rejects.toThrow('401');
     expect(fetchMock.mock.calls.some(([u]) => String(u) === '/api/ai/proxy')).toBe(false);
+  });
+});
+
+describe('主 API 的模型列表：每个供应商分支都要有兜底', () => {
+  it('供应商选 Gemini 时也能经中转取回列表', async () => {
+    const { apiTools } = await 载入案例();
+    const fetchMock = vi.fn((input: unknown, init?: RequestInit) => {
+      if (String(input) === '/api/ai/proxy') {
+        const 载荷 = 取载荷(init);
+        expect(String(载荷.url)).toContain('/models?key=sk-test');
+        return Promise.resolve(jsonResponse({
+          models: [{ name: 'models/gemini-2.5-flash', supportedGenerationMethods: ['generateContent'] }],
+        }));
+      }
+      throw new TypeError('Failed to fetch');
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const 列表 = await apiTools.fetchModels({
+      provider: 'gemini',
+      baseUrl: 'https://relay.example.test',
+      apiKey: 'sk-test',
+    });
+
+    expect(列表).toEqual(['gemini-2.5-flash']);
+  });
+
+  it('供应商选 Claude 时也能经中转取回列表', async () => {
+    const { apiTools } = await 载入案例();
+    const fetchMock = vi.fn((input: unknown, init?: RequestInit) => {
+      if (String(input) === '/api/ai/proxy') {
+        const 载荷 = 取载荷(init);
+        expect((载荷.headers as Record<string, string>)['x-api-key']).toBe('sk-test');
+        return Promise.resolve(jsonResponse({ data: [{ id: 'claude-sonnet-4-5' }] }));
+      }
+      throw new TypeError('Failed to fetch');
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const 列表 = await apiTools.fetchModels({
+      provider: 'claude',
+      baseUrl: 'https://relay.example.test/v1',
+      apiKey: 'sk-test',
+    });
+
+    expect(列表).toEqual(['claude-sonnet-4-5']);
   });
 });
 

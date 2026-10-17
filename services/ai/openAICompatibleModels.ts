@@ -1,5 +1,5 @@
 import { appendApiErrorReport } from './apiErrorReportService';
-import { 直连失败后经中转 } from './aiRelayClient';
+import { 带兜底取 } from './aiRelayClient';
 
 type CachedModels = {
   expiresAt: number;
@@ -27,17 +27,7 @@ export async function fetchOpenAICompatibleModels(baseRaw: string, apiKey: strin
   const errors: string[] = [];
   for (const url of buildOpenAICompatibleModelUrls(baseRaw)) {
     try {
-      const 请求头 = { Authorization: `Bearer ${apiKey}` };
-      let response: Response;
-      try {
-        response = await fetch(url, { headers: 请求头 });
-      } catch (直连错误) {
-        // 直连失败多半是 CORS（中转站没发 Access-Control-Allow-Origin）。
-        // 同源中转再试一次；本地没跑 dev/preview 时会返回 null，照原样抛。
-        const 兜底 = await 直连失败后经中转(url, { headers: 请求头 });
-        if (!兜底) throw 直连错误;
-        response = 兜底;
-      }
+      const response = await 带兜底取(url, { headers: { Authorization: `Bearer ${apiKey}` } });
       if (!response.ok) {
         const text = await response.text().catch(() => '');
         void appendApiErrorReport({
