@@ -191,6 +191,26 @@ describe('设置分区注册表', () => {
     expect(screen.getByText(/逐段推进/)).toBeInTheDocument();
     expect(screen.queryByText(/AVG/)).toBeNull();
   });
+
+  it('关掉再打开回到上次那一页；显式指定页签时仍然优先', async () => {
+    localStorage.removeItem('kty.settingsTab');
+
+    const 第一次 = render(<SettingsModal {...buildProps({ initialTab: undefined })} />);
+    fireEvent.click(await screen.findByRole('button', { name: /^文生图/ }));
+    expect(await screen.findByText('基础开关')).toBeInTheDocument();
+    第一次.unmount();
+
+    // 不给 initialTab 时不该回到 API 页，而是回到刚才那一页。
+    const 第二次 = render(<SettingsModal {...buildProps({ initialTab: undefined })} />);
+    expect(await screen.findByText('基础开关')).toBeInTheDocument();
+    第二次.unmount();
+
+    // 深链（从「视觉资产」跳转那种）仍以显式页签为准，不看记忆。
+    render(<SettingsModal {...buildProps({ initialTab: 'visual' })} />);
+    expect(await screen.findByText('galgame 模式')).toBeInTheDocument();
+
+    localStorage.removeItem('kty.settingsTab');
+  });
 });
 
 describe('子系统草稿语义', () => {

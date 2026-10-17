@@ -193,12 +193,13 @@ describe('条目编辑', () => {
     expect(screen.getByDisplayValue('原始内容')).toBeInTheDocument();
   });
 
-  it('保存后把新内容写回设置，且不动其它字段', () => {
+  it('写入草稿后把新内容写回设置，且不动其它字段', () => {
     const onChange = vi.fn();
     render(<LlmSettingsPanel LLM={建可编辑设置()} onChange={onChange} />);
     fireEvent.click(screen.getByText('编辑'));
     fireEvent.change(screen.getByDisplayValue('原始内容'), { target: { value: '改过的内容' } });
-    fireEvent.click(screen.getByText('保存'));
+    // 按钮叫「写入草稿」而不是「保存」：这里只改内存，落盘在页面底部的「保存文生图设置」。
+    fireEvent.click(screen.getByText('写入草稿'));
 
     const 新设置 = onChange.mock.calls[0][0] as LLM设置;
     expect(新设置.预设列表.默认.entries[0].content).toBe('改过的内容');

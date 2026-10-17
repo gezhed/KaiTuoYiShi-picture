@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 
 import { getSettingsSection, settingsSectionGroups, settingsSections } from './settingsSections/registry';
 import type { SettingsModalProps, SettingsSectionContext, SettingsTab } from './settingsSections/types';
@@ -6,6 +6,27 @@ import type { 游戏设置, 主题预设 } from '@/models/settings';
 import { mediumClip } from '@/components/ui/clipPaths';
 
 export type { SettingsTab } from './settingsSections/types';
+
+/** 上次关掉设置时停在哪一页。只存本机，跨设备没有意义，所以不进设置存档。 */
+const 页签记忆键 = 'kty.settingsTab';
+
+function 读上次页签(): SettingsTab | null {
+  try {
+    const 值 = globalThis.localStorage.getItem(页签记忆键);
+    // 页签会被增删；存的是旧名字时当没存过，别让设置一打开就是空白。
+    return 值 && settingsSections.some((项) => 项.key === 值) ? (值 as SettingsTab) : null;
+  } catch {
+    return null;
+  }
+}
+
+function 记上次页签(页签: SettingsTab): void {
+  try {
+    globalThis.localStorage.setItem(页签记忆键, 页签);
+  } catch {
+    // 隐私模式下写不进去：记不住就每次回默认页，不影响其它功能。
+  }
+}
 
 export function SettingsModal(props: SettingsModalProps) {
   const {
@@ -15,9 +36,20 @@ export function SettingsModal(props: SettingsModalProps) {
     onThemeChange,
     onPersistGameSettings,
     onPersistTheme,
-    initialTab = 'api',
+    initialTab,
   } = props;
-  const [activeTab, setActiveTab] = useState<SettingsTab>(initialTab);
+  /*
+   * 页签记忆的优先级：显式指定的 `initialTab`（深链，例如从「视觉资产」跳过来）
+   * → 上次关掉时那一页 → `api`。没有记忆的话每次打开都回到 API 页，
+   * 用户改完文生图关掉再打开就要重新找一遍。
+   */
+  const [activeTab, setActiveTab] = useState<SettingsTab>(
+    () => initialTab ?? 读上次页签() ?? 'api',
+  );
+
+  useEffect(() => {
+    记上次页签(activeTab);
+  }, [activeTab]);
 
   const persistGameSettingsChange = useCallback((next: 游戏设置) => {
     onGameSettingsChange(next);

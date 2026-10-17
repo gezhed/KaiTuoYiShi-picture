@@ -103,7 +103,10 @@ export function App() {
   const [showMysteryChat, setShowMysteryChat] = useState(false);
   const [showCharacter, setShowCharacter] = useState(false);
   const [showPhone, setShowPhone] = useState(false);
-  const [settingsInitialTab, setSettingsInitialTab] = useState<SettingsTab>('api');
+  /**
+   * 只在「从某处深链打开设置」时给值；普通打开留空，由 SettingsModal 回到上次那一页。
+   */
+  const [settingsInitialTab, setSettingsInitialTab] = useState<SettingsTab | undefined>(undefined);
   const [activeSystem, setActiveSystem] = useState<GameSystemId | null>(null);
   const [undoDraft, setUndoDraft] = useState<{ id: string; text: string } | null>(null);
 
@@ -120,7 +123,10 @@ export function App() {
   const handleOpenProfile = useCallback(() => setShowCharacter(true), []);
   const handleOpenPhone = useCallback(() => setShowPhone(true), []);
   const handleOpenSaveLoad = useCallback(() => setShowSaveLoad(true), []);
-  const handleOpenSettings = useCallback(() => setShowSettings(true), []);
+  const handleOpenSettings = useCallback(() => {
+    setSettingsInitialTab(undefined);
+    setShowSettings(true);
+  }, []);
 
   /**
    * 打开设置并直接落在指定页签。
@@ -245,10 +251,7 @@ export function App() {
     onEnterWorldbook: () => setShowWorldbookManager(true),
     onEnterGame: () => state.setView('game'),
     onOpenZhiku: () => setShowZhikuManager(true),
-    onOpenSettings: () => {
-      setSettingsInitialTab('api');
-      setShowSettings(true);
-    },
+    onOpenSettings: handleOpenSettings,
     onOpenCloudSave: () => setShowCloudSave(true),
     onOpenAnnouncements: () => setShowReleaseAnnouncements(true),
     onOpenMysteryChat: () => setShowMysteryChat(true),

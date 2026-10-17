@@ -110,6 +110,15 @@ export function LlmSettingsPanel({
         title="LLM"
         desc="把正文变成插图提示词。不启用它，「生成本回合插图」与正文自动配图都无法工作。"
       >
+        {/*
+          这一页的改动只进内存，落盘靠页面底部的「保存文生图设置」。
+          原先条目编辑里那个按钮也叫「保存」，提示语是「已保存」——很容易让人以为
+          已经存好了，关掉设置再打开（甚至刷新）才发现改动没了。
+        */}
+        <提示条
+          kind="info"
+          text="这一页改完要点页面底部的「保存文生图设置」才会存到本机；只关掉设置不落盘。"
+        />
         <开关行
           label="启用 LLM 预设"
           desc="关闭时正文配图会直接报错；手动出图不受影响。"
@@ -313,10 +322,10 @@ export function LlmSettingsPanel({
                                 )),
                               });
                               set编辑中(null);
-                              set提示({ kind: 'ok', text: `已保存「${条目.name || 条目.id}」的内容。` });
+                              set提示({ kind: 'ok', text: `已写入草稿「${条目.name || 条目.id}」。点页面底部的「保存文生图设置」才会存到本机。` });
                             }}
                           >
-                            保存
+                            写入草稿
                           </次级按钮>
                           <次级按钮 onClick={() => set编辑中(null)}>放弃修改</次级按钮>
                           <span className="text-[11px]" style={{ color: 'rgba(var(--tj-text-secondary), 0.7)' }}>
