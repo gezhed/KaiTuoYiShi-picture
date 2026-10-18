@@ -148,19 +148,30 @@ export function buildSaveCatalogSnapshot(
   const unreadableIds: number[] = [];
   let hiddenBaseCount = 0;
 
-  for (const id of saveIds) {
-    const record = byId.get(id);
-    if (!record) continue;
+  /*
+   * 目录以**摘要**为准，而不是以「已加载到浏览器的存档」为准。
+   *
+   * 以前这里是遍历 saveIds（= 浏览器里已有的存档行）再去查摘要，
+   * 于是：磁盘版为了省内存只预载最新 3 份存档时，目录就只剩 3 条 ——
+   * 界面上表现为「存档全没了」，而磁盘上的摘要其实是齐的。
+   * 现在只要摘要在，就进目录；存档本体按需从磁盘读（loadRawSave 已支持）。
+   */
+  for (const record of byId.values()) {
+    if (record.id <= 0) continue;
     if (record.visibility === 'visible') items.push(stripCatalogMetadata(record));
     else if (record.visibility === 'legacy-backup') legacyBackups.push(stripCatalogMetadata(record));
     else if (record.visibility === 'hidden-delta-base') hiddenBaseCount += 1;
-    else unreadableIds.push(id);
+    else unreadableIds.push(record.id);
   }
 
   const pendingIds = saveIds.filter((id) => !byId.has(id)).sort((a, b) => b - a);
-  const staleCatalogIds = Array.from(byId.keys())
-    .filter((id) => !saveIdSet.has(id))
-    .sort((a, b) => b - a);
+  // 按需读取模式下（摘要有、存档行没预载）不算“陈旧目录”，否则会被当成垃圾清掉。
+  const onDemandMode = byId.size > saveIds.length;
+  const staleCatalogIds = onDemandMode
+    ? []
+    : Array.from(byId.keys())
+      .filter((id) => !saveIdSet.has(id))
+      .sort((a, b) => b - a);
 
   return {
     items: sortSummaries(items),
