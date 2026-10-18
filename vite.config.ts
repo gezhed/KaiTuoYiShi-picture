@@ -32,6 +32,23 @@ function readRequestBody(req: import('node:http').IncomingMessage): Promise<stri
   });
 }
 
+/**
+ * 读原始二进制请求体。
+ *
+ * 资产（图片等）**绝不能**走 `readRequestBody`：那个函数 `setEncoding('utf8')` 会把字节
+ * 当字符串解码再编码，二进制一过就变形（实测 70 字节的 PNG 上传后变 94 字节）。
+ */
+function readRequestBodyBuffer(req: import('node:http').IncomingMessage): Promise<Buffer> {
+  return new Promise((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    req.on('data', (chunk: Buffer | string) => {
+      chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+    });
+    req.on('end', () => resolve(Buffer.concat(chunks)));
+    req.on('error', reject);
+  });
+}
+
 type ProxyMiddleware = (
   req: import('node:http').IncomingMessage,
   res: import('node:http').ServerResponse,
@@ -83,7 +100,13 @@ function createSaveMiddleware(): ProxyMiddleware {
       const method = req.method ?? 'GET';
       const originalUrl = (req as { originalUrl?: string }).originalUrl;
       const requestPath = originalUrl ?? `/api/saves${req.url ?? ''}`;
-      const body = method === 'GET' || method === 'HEAD' ? undefined : await readRequestBody(req);
+      // 资产路由必须按二进制读：JSON 路由才能走 utf8 字符串。
+      const isAsset = requestPath.startsWith('/api/saves/asset/');
+      const body = method === 'GET' || method === 'HEAD'
+        ? undefined
+        : isAsset
+          ? await readRequestBodyBuffer(req)
+          : await readRequestBody(req);
       const response = await handleSaveApi(new Request(`http://localhost${requestPath}`, {
         method,
         headers: { 'content-type': req.headers['content-type'] ?? 'application/json' },

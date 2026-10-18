@@ -39,6 +39,76 @@ function storeDir(root: string, store: LocalSaveStoreName): string {
   return path.join(root, 'store', store);
 }
 
+/** 资产（图片等二进制）目录：与存档同根，但独立于逐行 JSON。 */
+const ASSET_DIR_NAME = 'assets';
+
+function assetDir(root: string): string {
+  return path.join(root, ASSET_DIR_NAME);
+}
+
+/** 资产文件名白名单：只允许安全字符，堵死路径穿越。 */
+function safeAssetName(name: string): string | null {
+  const trimmed = name.trim();
+  if (!trimmed || trimmed.length > 160) return null;
+  if (trimmed === '.' || trimmed === '..') return null;
+  if (!/^[A-Za-z0-9._-]+$/.test(trimmed)) return null;
+  return trimmed;
+}
+
+function guessAssetMime(name: string): string {
+  const ext = path.extname(name).toLowerCase();
+  if (ext === '.png') return 'image/png';
+  if (ext === '.jpg' || ext === '.jpeg') return 'image/jpeg';
+  if (ext === '.webp') return 'image/webp';
+  if (ext === '.gif') return 'image/gif';
+  if (ext === '.json') return 'application/json; charset=utf-8';
+  return 'application/octet-stream';
+}
+
+/** 读一份资产；不存在或名字非法返回 null。 */
+export async function readAssetFile(
+  name: string,
+  root = resolveSaveRoot(),
+): Promise<{ data: Buffer; mime: string } | null> {
+  const safe = safeAssetName(name);
+  if (!safe) return null;
+  try {
+    const data = await fs.readFile(path.join(assetDir(root), safe));
+    return { data, mime: guessAssetMime(safe) };
+  } catch {
+    return null;
+  }
+}
+
+/** 写一份资产（原子写）；名字非法返回 null。返回实际落盘的文件名。 */
+export async function writeAssetFile(
+  name: string,
+  data: Buffer,
+  root = resolveSaveRoot(),
+): Promise<string | null> {
+  const safe = safeAssetName(name);
+  if (!safe) return null;
+  const dir = assetDir(root);
+  await fs.mkdir(dir, { recursive: true });
+  // 先写临时文件再改名：避免半截文件被当成有效资产。
+  const tmp = path.join(dir, `.${safe}.${Date.now().toString(36)}.tmp`);
+  await fs.writeFile(tmp, data);
+  await fs.rename(tmp, path.join(dir, safe));
+  return safe;
+}
+
+/** 删除一份资产；名字非法返回 false。 */
+export async function deleteAssetFile(name: string, root = resolveSaveRoot()): Promise<boolean> {
+  const safe = safeAssetName(name);
+  if (!safe) return false;
+  try {
+    await fs.rm(path.join(assetDir(root), safe), { force: true });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function manifestPath(root: string): string {
   return path.join(root, 'manifest.json');
 }

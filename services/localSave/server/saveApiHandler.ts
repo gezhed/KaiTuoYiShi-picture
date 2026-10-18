@@ -12,12 +12,15 @@ import {
 import {
   applyMutation,
   countStoreRows,
+  deleteAssetFile,
   hasLocalSaveData,
+  readAssetFile,
   readManifest,
   readStoreRow,
   readStoreRows,
   resolveSaveRoot,
   wipeAll,
+  writeAssetFile,
   writeTranscript,
 } from './saveFileStore';
 
@@ -73,6 +76,30 @@ export async function handleSaveApi(request: Request): Promise<Response> {
         ...(tail ? { tail: Number(tail) } : {}),
       });
       return json({ ok: true, store, ...page });
+    }
+
+    // 资产（图片等二进制）：GET 取 / POST|PUT 写 / DELETE 删。名字只允许安全字符。
+    if (route.startsWith('asset/')) {
+      const name = decodeURIComponent(route.slice('asset/'.length));
+      if (request.method === 'GET') {
+        const file = await readAssetFile(name);
+        if (!file) return json({ ok: false, error: 'not-found' }, 404);
+        return new Response(new Uint8Array(file.data), {
+          status: 200,
+          headers: { 'content-type': file.mime, 'cache-control': 'no-cache' },
+        });
+      }
+      if (request.method === 'POST' || request.method === 'PUT') {
+        const bytes = Buffer.from(await request.arrayBuffer());
+        if (!bytes.length) return json({ ok: false, error: 'empty' }, 400);
+        const stored = await writeAssetFile(name, bytes);
+        if (!stored) return json({ ok: false, error: 'invalid-name' }, 400);
+        return json({ ok: true, name: stored, bytes: bytes.length });
+      }
+      if (request.method === 'DELETE') {
+        return json({ ok: await deleteAssetFile(name) });
+      }
+      return json({ ok: false, error: 'method-not-allowed' }, 405);
     }
 
     if (request.method === 'GET' && route === 'stats') {
