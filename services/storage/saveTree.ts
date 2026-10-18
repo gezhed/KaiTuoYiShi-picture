@@ -201,6 +201,36 @@ export async function compressAutoSaveWindow(rootId: string): Promise<number> {
   const keepOldest = chain[AUTO_WINDOW_DELTAS] as SaveListItemSummary | undefined;
   const 链上新父 = 链上截断[链上截断.length - 1] as SaveListItemSummary | undefined;
   const nextParentNodeId = 链上新父 ? (链上新父.saveTree?.parentNodeId ?? null) : null;
+  /*
+   * 安全闸：只要一个节点还被「没被删掉的节点」当作父节点引用，就绝不删它。
+   * 否则链会被切成两截：从 head 回溯到断点就停，重roll 往上找检查点时报
+   * 「父检查点缺失」，而界面上完全看不出来——这次就是把一个 488 回合的节点
+   * 当成同根孤儿删掉，只留下它的增量文件，底下两个节点直接成了孤儿。
+   *
+   * 唯一允许断的例外是滚动窗口本身：被截断的链尾会把 keepOldest 交给 nextParentNodeId。
+   */
+  const 允许断开的父 = new Set<string>();
+  const 链尾节点 = 链上截断[链上截断.length - 1]?.saveTree?.nodeId;
+  if (链上截断.length && keepOldest && 链尾节点) 允许断开的父.add(链尾节点);
+  const dropSet = new Set(drop);
+  const 仍被引用的父 = new Set<string>();
+  for (const item of catalog.items) {
+    if (dropSet.has(item)) continue;
+    const parent = item.saveTree?.parentNodeId;
+    if (parent) 仍被引用的父.add(parent);
+  }
+  const 安全删除 = drop.filter((item) => {
+    const nodeId = item.saveTree?.nodeId;
+    if (!nodeId) return true;
+    if (!仍被引用的父.has(nodeId)) return true;
+    return 允许断开的父.has(nodeId);
+  });
+  if (安全删除.length !== drop.length) {
+    devLog('save', 'auto-window-drop-guarded', { blocked: drop.length - 安全删除.length });
+  }
+  drop.length = 0;
+  drop.push(...安全删除);
+  if (!drop.length) return 0;
   const db = await openDB();
   await deleteManagedSaveItems(db, drop);
   // 只有链上确实截断过，才存在「保留链的新链根」；否则 keepOldest 为空，不能重定父。
