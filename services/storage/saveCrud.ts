@@ -151,8 +151,49 @@ export async function deleteManagedSaveItems(db: IDBDatabase, candidates: SaveLi
   await cleanupUnreferencedHiddenSaves(db);
 }
 
-export async function getSaveCatalogSnapshot(): Promise<SaveCatalogSnapshot> {
+/**
+ * 自愈：把「parentNodeId 指向一个已经不存在的存档」这种断链修掉。
+ *
+ * 断链的后果很阴：界面上完全正常，只有重roll 往上报「父检查点缺失」；
+ * 而且链一断，后续的祖先判断（自动窗口清理）也会把祖先当成孤儿。
+ * 返回 true 表示确实修了（指针已被置为空，该节点成为链根）。
+ */
+export async function repairSaveParentPointer(nodeId: string): Promise<boolean> {
+  const normalized = normalizeNodeId(nodeId);
+  if (!normalized) return false;
+  const saveId = await loadSaveIdByNodeId(normalized);
+  if (!saveId) return false;
+  const save = await loadSave(saveId);
+  const tree = (save as { saveTree?: { parentNodeId?: string | null } | null } | null)?.saveTree;
+  const parentNodeId = tree?.parentNodeId ?? null;
+  if (!parentNodeId) return false;
+  if (await loadSaveIdByNodeId(parentNodeId)) return false;
   const db = await openDB();
+  await new Promise<void>((resolve, reject) => {
+    const tx = db.transaction([SAVES_STORE, SAVE_SUMMARIES_STORE], 'readwrite');
+    const saveStore = tx.objectStore(SAVES_STORE);
+    const summaryStore = tx.objectStore(SAVE_SUMMARIES_STORE);
+    const request = saveStore.get(saveId);
+    request.onsuccess = () => {
+      const row = request.result as { saveTree?: Record<string, unknown> | null } | undefined;
+      if (!row) return;
+      saveStore.put({ ...row, saveTree: { ...(row.saveTree ?? {}), parentNodeId: null } });
+      // 摘要里也存了一份 parentNodeId（清理窗口用它推链），不一起改会再被当成断链。
+      const summaryRequest = summaryStore.get(saveId);
+      summaryRequest.onsuccess = () => {
+        const summary = summaryRequest.result as { saveTree?: Record<string, unknown> | null } | undefined;
+        if (!summary?.saveTree) return;
+        summaryStore.put({ ...summary, saveTree: { ...summary.saveTree, parentNodeId: null } });
+      };
+    };
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(toError(tx.error));
+  });
+  devLog('save', 'parent-pointer-repaired', { nodeId: normalized, missingParent: parentNodeId });
+  return true;
+}
+
+export async function getSaveCatalogSnapshot(): Promise<SaveCatalogSnapshot> {  const db = await openDB();
   return readIndexedSaveCatalogSnapshot(db);
 }
 

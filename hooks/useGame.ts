@@ -18,7 +18,7 @@ import type { 开局整理档案 } from '@/models/world';
 import { 提取NPC同行记忆文本列表, type NPC同行记忆条目 } from '@/models/npc';
 import type { STRegexScript } from '@/models/stTypes';
 import { deleteLegacyBackupSaves, deleteSaveTree, forkSaveTreeLeaf, loadActiveLeaf, loadSaveTree } from '@/services/storage/saveTree';
-import { getSaveCatalogSnapshot, loadSave, loadSaveForCloudTransfer, loadSaveIdByNodeId, saveGame } from '@/services/storage/saveCrud';
+import { getSaveCatalogSnapshot, loadSave, loadSaveForCloudTransfer, loadSaveIdByNodeId, repairSaveParentPointer, saveGame } from '@/services/storage/saveCrud';
 import { exportSavePackage, exportSaveTreePackage, importSaveFileAsMany } from '@/services/storage/importExport';
 import { repairSaveDatabase, startSaveCatalogRepair } from '@/services/storage/catalogMaintenance';
 import { loadSetting, saveSetting } from '@/services/storage/settings';
@@ -375,7 +375,11 @@ export function useGame(): UseGameReturn {
         const parentTree = (parentSave as { saveTree?: 存档树元信息 | null } | null)?.saveTree;
         if (!parentSave || !parentTree) {
           devLogError('turn', 'reroll-parent-missing', new Error(`父检查点缺失：${forkTargetNodeId}`), { rootId: tree.rootId });
-          disableReroll('父检查点缺失，无法重roll。');
+          // 自愈：把断链指针修掉（置为链根），下次/其它操作不会再撞同一个坑。
+          const fixed = await repairSaveParentPointer(forkTargetNodeId).catch(() => false);
+          disableReroll(fixed
+            ? '父检查点已在存档链上断裂（已自动修复指针），本轮无法重roll；可继续推进或读取更早的存档。'
+            : '父检查点缺失，无法重roll。');
           return;
         }
         if (parentTree.rootId !== tree.rootId) {
