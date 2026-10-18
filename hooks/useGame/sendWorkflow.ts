@@ -141,15 +141,14 @@ export async function executeSendWorkflow(
     Object.assign(d, s4.deltas);
     visibilityPublisher = s4.visibilityPublisher;
     let streamedText = s4.streamedText;
-    const { result, streamEventCount, previewChain: s4PreviewChain } = s4;
+    const { result, streamEventCount, preview: previewDriver } = s4;
     d.rawFullText = result.fullText;
-    const previewChain = s4PreviewChain;
 
     visibilityPublisher?.flush();
 
     if (abortController.signal.aborted || !isCurrentWorkflow()) return;
 
-    Object.assign(d, await stage5_replyLanding(ctx, d, result, streamedText, streamEventCount, previewChain, startTime, headNodeId));
+    Object.assign(d, await stage5_replyLanding(ctx, d, result, streamedText, streamEventCount, previewDriver, startTime, headNodeId));
     if (d.pendingVariableStarted) pendingVariableStarted = true;
 
     const landedAssistantId = d.aiMsg?.id;

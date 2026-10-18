@@ -14,11 +14,8 @@ import {
   buildDeepSeekProtocolRetryGuard,
 } from './mainResponseProtocol';
 import { pushQueueTask } from './workflowTaskRuntime';
-import {
-  isPageHidden,
-  splitStreamingReveal,
-  waitStreamingPreviewDelay,
-} from './streamingPreview';
+import { isPageHidden } from './streamingPreview';
+import { createStreamingPreviewDriver, type StreamingPreviewDriver } from '@/utils/streamingPreviewDriver';
 import {
   createDocumentVisibilitySource,
   createVisibilityBufferedPublisher,
@@ -29,9 +26,9 @@ export interface Stage4Output {
   deltas: Partial<TurnDeltas>;
   result: Awaited<ReturnType<typeof sendChatMessage>>;
   streamedText: string;
-  previewText: string;
+  /** 流式预览驱动器：交给 stage5 在落地前追平一次，不做重放。 */
+  preview: StreamingPreviewDriver;
   streamEventCount: number;
-  previewChain: Promise<void>;
   visibilityPublisher: VisibilityBufferedPublisher | null;
 }
 
@@ -57,20 +54,20 @@ export async function stage4_aiRequest(
 
   let streamedText = '';
   let streamEventCount = 0;
-  let previewText = '';
-  let previewEpoch = 0;
-  let previewChain: Promise<void> = Promise.resolve();
+
+  /*
+   * 预览走单调度器（见 utils/streamingPreviewDriver）：不再为每个 delta 排队补间，
+   * 也就不会出现「模型写完了界面还在打字」和「中途被清空重打」的抽搐。
+   */
+  const preview = createStreamingPreviewDriver((text) => streamMessageSetter.set(text));
 
   let vp = visibilityPublisher;
 
   if (!vp && typeof document !== 'undefined') {
     vp = createVisibilityBufferedPublisher({
       source: createDocumentVisibilitySource(document),
-      commit: (text) => {
-        previewEpoch += 1;
-        previewText = text;
-        streamMessageSetter.flush(text);
-      },
+      // 页面隐藏时不刷预览（rAF 本来也会暂停），回到前台一次性追平。
+      commit: () => preview.push(streamedText),
     });
   }
 
@@ -85,9 +82,7 @@ export async function stage4_aiRequest(
     attempt++;
     streamedText = '';
     streamEventCount = 0;
-    previewText = '';
-    previewEpoch += 1;
-    previewChain = Promise.resolve();
+    preview.reset();
     streamMessageSetter.flush('');
     try {
       result = await sendChatMessage(mainStoryConfig, {
@@ -95,38 +90,16 @@ export async function stage4_aiRequest(
         systemPrompt,
         onDelta: (delta) => {
           streamedText += delta;
+          streamEventCount += 1;
           if (!state.deviceSettings.gameSettings.enableStreaming) {
             streamMessageSetter.set(streamedText);
             return;
           }
-          if (vp?.bufferWhenHidden(streamedText)) {
-            previewEpoch += 1;
-            previewText = streamedText;
+          if (isPageHidden()) {
+            vp?.bufferWhenHidden(streamedText);
             return;
           }
-          streamEventCount += 1;
-          const deltaPreviewEpoch = previewEpoch;
-          previewChain = previewChain.then(async () => {
-            const chunks = splitStreamingReveal(delta);
-            for (const chunk of chunks) {
-              if (abortController.signal.aborted || deltaPreviewEpoch !== previewEpoch) return;
-              if (isPageHidden()) {
-                previewEpoch += 1;
-                previewText = streamedText;
-                vp?.bufferWhenHidden(streamedText);
-                return;
-              }
-              previewText += chunk;
-              streamMessageSetter.set(previewText);
-              await waitStreamingPreviewDelay(14, abortController.signal);
-              if (isPageHidden()) {
-                previewEpoch += 1;
-                previewText = streamedText;
-                vp?.bufferWhenHidden(streamedText);
-                return;
-              }
-            }
-          });
+          preview.push(streamedText);
         },
         signal: abortController.signal,
         streaming: mainRequestMode === 'stream',
@@ -243,7 +216,7 @@ export async function stage4_aiRequest(
           config: mainStoryConfig,
           requestMode: mainRequestMode ?? 'non-stream',
           error: innerErr,
-          responseText: streamedText || previewText || '',
+          responseText: streamedText || '',
         });
       }
       if (isNonRetryableAIError(innerErr) || attempt >= calcMaxAttempts) break;
@@ -266,9 +239,8 @@ export async function stage4_aiRequest(
     },
     result,
     streamedText,
-    previewText,
+    preview,
     streamEventCount,
-    previewChain,
     visibilityPublisher: vp,
   };
 }

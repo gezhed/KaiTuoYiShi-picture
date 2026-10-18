@@ -161,12 +161,18 @@ function buildNeighborMeta(messages: 聊天消息[]): NeighborMeta[] {
 
 export function ChatList({ messages, loading, scrollRef, onEditBody, turnActions, turnActionContext, narrativeImageManualEnabled = false, 插图显示, 逐句推进, npcRecords, traveler, album, showInnerVoice = true, visualTextSettings, devMode = false, onIllustrationRegenerate, onIllustrationRerollPrompts }: ChatListProps) {
   const streamingMessage = useStreamingMessage();
+  const 上次广播时刻 = useRef(0);
   // 只有「主机」才广播过程状态；遥控端（手机）只是显示，绝不转发。
   // 结束（turn-done）不在这里发：它由 stage12_save 在回合真正封版后发，
   // 好让其它端拿到的是变量结算完的完整回合。
   useEffect(() => {
     if (!是主机端()) return;
     if (streamingMessage) {
+      // 预览可能每秒推 60 帧，直接广播就是把服务器当帧循环刷。
+      // 限到 ~8 次/秒；收尾的完整正文由 turn-done 事件带过去，不会丢。
+      const 现在 = Date.now();
+      if (现在 - 上次广播时刻.current < 120) return;
+      上次广播时刻.current = 现在;
       void 发布实时事件({ kind: 'stream', source: 'host', text: streamingMessage });
       return;
     }

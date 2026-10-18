@@ -8,6 +8,7 @@ import { buildCachePrefixDiagnostics } from './turnDiagnostics';
 import { buildNpcLedgerDebug, formatNpcLedgerPreview } from './npcLedgerWorkflow';
 import { formatZhikuDiagnosticsPreview } from './recallDiagnostics';
 import { revealStreamingPreview } from './streamingPreview';
+import type { StreamingPreviewDriver } from '@/utils/streamingPreviewDriver';
 import { pushQueueTask } from './workflowTaskRuntime';
 import { compactChatHistoryForLongSession } from '@/utils/longSessionRetention';
 
@@ -19,7 +20,7 @@ export async function stage5_replyLanding(
   result: Awaited<ReturnType<typeof import('@/services/ai/text').sendChatMessage>>,
   streamedText: string,
   streamEventCount: number,
-  previewChain: Promise<void>,
+  preview: StreamingPreviewDriver,
   startTime: number,
   leafId: string,
 ): Promise<Partial<TurnDeltas>> {
@@ -56,7 +57,8 @@ export async function stage5_replyLanding(
 
   if (state.deviceSettings.gameSettings.enableStreaming) {
     if (streamEventCount > 0) {
-      await previewChain;
+      // 只追平，不重放：重放会把已经显示的正文清空再打一遍，视觉上就是那次抽搐。
+      preview.finish();
     } else if (displayText.trim()) {
       await revealStreamingPreview(displayText, abortController.signal, { delayMs: 16, minChunks: 8 });
     }
