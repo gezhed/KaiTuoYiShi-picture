@@ -47,7 +47,7 @@ export async function restoreDeltaSaveIfNeeded(db: IDBDatabase, save: 存档数�
 
 export async function loadDeltaRecordByNodeId(db: IDBDatabase, nodeId: string): Promise<SaveNodeDeltaRecord | null> {
   if (!db.objectStoreNames.contains(SAVE_NODE_DELTAS_STORE)) return null;
-  return new Promise((resolve, reject) => {
+  const localRecord = await new Promise<SaveNodeDeltaRecord | null>((resolve, reject) => {
     const tx = db.transaction(SAVE_NODE_DELTAS_STORE, 'readonly');
     const req = tx.objectStore(SAVE_NODE_DELTAS_STORE).get(nodeId);
     req.onsuccess = () => {
@@ -56,6 +56,23 @@ export async function loadDeltaRecordByNodeId(db: IDBDatabase, nodeId: string): 
     };
     req.onerror = () => reject(toError(req.error));
   });
+  if (localRecord) return localRecord;
+  /*
+   * 增量表是**不预载**的（动辄数 GB），所以旧档的增量只在磁盘上。
+   * 少了这个回退，restoreDeltaSaveIfNeeded 找不到增量就会静默把「只有外壳、
+   * chatHistory 为空」的行当作恢复结果返回 —— 表现为读取旧档 / 重roll 之后，
+   * 之前的所有对话记录凭空消失。
+   */
+  const diskRecord = await readStoreRow<SaveNodeDeltaRecord>('saveNodeDeltas', nodeId);
+  if (!diskRecord) return null;
+  await new Promise<void>((resolve) => {
+    const tx = db.transaction(SAVE_NODE_DELTAS_STORE, 'readwrite');
+    tx.objectStore(SAVE_NODE_DELTAS_STORE).put(diskRecord);
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => resolve();
+    tx.onabort = () => resolve();
+  });
+  return diskRecord;
 }
 
 export async function scanIndexedDeltaRecords(
